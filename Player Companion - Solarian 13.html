@@ -1474,6 +1474,9 @@ function loadSolarianData(){
     {id:'a_holysym',name:'Silver Holy Symbol (Urgathoa)',weight:1,bonus:0,armorType:'',maxDex:99,acp:0,spellFail:0,slotType:'Neck',properties:'Fly on skull motif. Required for channeling and some spells.'}
   ];
   S.slots={Armor:'a_halfplate',Shoulders:'a_cloak',Neck:'a_holysym'};
+  S.ac.armor=8;   // Half-Plate
+  S.ac.maxDex=0;  // Half-Plate max DEX
+  S.ac.spellFail=40; // Half-Plate (irrelevant — Heavy Armor Prof)
   // Shield NOT slotted by default — scythe is two-handed. Player equips when switching to mace.
 
   // GEAR — Equipment
