@@ -1438,6 +1438,46 @@ function loadThelmaData(){
   // Sense Motive: +2 from Alertness (Nub)
   if(!S.skills['sk-SenseMotive'])S.skills['sk-SenseMotive']={ranks:0,misc:0,cs:false};
   S.skills['sk-SenseMotive'].misc=2;
+
+  // Cloak of Resistance +1 — +1 magic to all saves
+  S.saves.fort.magic=1;
+  S.saves.ref.magic=1;
+  S.saves.will.magic=1;
+
+  // Starting gold (3000 - ~2843 spent)
+  if(!S.gp) S.gp=157;
+
+  // ── GEAR PRE-POPULATION ──
+  // Weapons
+  S.gear.weapons=[
+    {id:'w_dagger',name:'Dagger',weight:1,damage:'1d4',crit:'19-20/×2',damageType:'P/S',range:'10 ft.',ammo:null,properties:''}
+  ];
+
+  // Worn / Equipped Items
+  S.gear.equip=[
+    {id:'e_haramaki',name:'Haramaki',weight:1,bonus:1,armorType:'Light',maxDex:99,acp:0,spellFail:0,slotType:'Armor',properties:'No arcane spell failure'},
+    {id:'e_cloak_res',name:'Cloak of Resistance +1',weight:1,bonus:0,armorType:'',maxDex:99,acp:0,spellFail:0,slotType:'Shoulders',properties:'+1 all saves'},
+    {id:'e_spell_pouch',name:'Spell Component Pouch',weight:2,bonus:0,armorType:'',maxDex:99,acp:0,spellFail:0,slotType:'Belt',properties:'Required for casting'}
+  ];
+
+  // Equip slots
+  S.slots['Armor']='e_haramaki';
+  S.slots['Shoulders']='e_cloak_res';
+  S.slots['Belt']='e_spell_pouch';
+
+  // Miscellaneous Gear
+  S.gear.other=[
+    {id:'o_wand_clw',name:'Wand of Cure Light Wounds',weight:0,properties:'50 charges, 1d8+1 HP, UMD DC 20 (INT-based)'},
+    {id:'o_pearl',name:'Pearl of Power (1st)',weight:0,properties:'Recover one 1st-level spell slot per day'},
+    {id:'o_backpack',name:'Backpack',weight:2,properties:''},
+    {id:'o_bedroll',name:'Bedroll',weight:5,properties:''},
+    {id:'o_rope',name:'Rope, hemp (50 ft.)',weight:10,properties:''},
+    {id:'o_rations',name:'Trail Rations (5)',weight:5,properties:''},
+    {id:'o_waterskin',name:'Waterskin',weight:4,properties:''},
+    {id:'o_candles',name:'Candles (10)',weight:0,properties:''},
+    {id:'o_ink',name:'Ink',weight:0,properties:''},
+    {id:'o_inkpen',name:'Inkpen',weight:0,properties:''}
+  ];
 }
 
 // INIT
@@ -1450,8 +1490,8 @@ window.addEventListener('DOMContentLoaded',()=>{
     S.saves.fort.base=1;S.saves.ref.base=1;S.saves.will.base=3;
     S.languages='Common, Sylvan, Draconic, Aklo, Infernal';S.senses='';
     S.hasComp=true;S.hasPow=true;
-    loadThelmaData();
   }
+  loadThelmaData();
   renderApp();
 });
 </script>
