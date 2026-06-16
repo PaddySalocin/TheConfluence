@@ -1,0 +1,2010 @@
+<!--
+  ================================================================
+  PATHFINDER 1E PLAYER COMPANION — MASTER TEMPLATE
+  ================================================================
+  
+  HOW TO CUSTOMIZE FOR A NEW CHARACTER:
+  
+  1. Change CHAR_ID constant to character name (lowercase, no spaces, e.g. 'cavik')
+  2. Change <title> to "[Name]'s Companion"
+  3. Replace CHAR_IMG with base64 portrait — ALWAYS DO THIS, DO NOT SKIP
+     - Resize to ~500-600px wide, JPEG quality 60% BEFORE encoding
+     - Use: python3 -c "from PIL import Image; import base64,io; img=Image.open('file.jpg'); img.thumbnail((600,900)); buf=io.BytesIO(); img.save(buf,'JPEG',quality=60); print('data:image/jpeg;base64,'+base64.b64encode(buf.getvalue()).decode())"
+  4. Hardcode ALL character data into the let S={} block (do NOT rely on UI entry):
+     - Identity: name, race, cls, level, deity, speed, size, languages, senses
+     - Abilities: base scores in abilities{}, leave abilTemp{} at 0
+     - Combat: hp, maxHp, bab, saves (each has base/magic/misc/temp), initMisc
+     - AC: armor/shield auto-set from equipped gear; set natural/deflect/misc manually
+     - Gear weapons: [{id:'w1', name, damage, crit, damageType, weight, range, ammo, properties}]
+     - Gear equip: [{id:'e1', name, bonus, armorType, maxDex, acp, spellFail, weight, slotType}]
+     - Gear other: [{id:'o1', name, weight, properties}]
+     - Slots: map item ids to body slots {Armor:'e1', Neck:'e2', etc.}
+       Valid slots: Armor, Shield, Head, Headband, Eyes, Neck, Shoulders, Chest, Body, Belt, Wrists, Hands, Ring 1, Ring 2, Feet
+     - equippedWeapons: {main:'w1', off:null}
+     - Skills: key='sk-SkillName' (no spaces), value={ranks, misc, cs:true/false}
+       misc = racial/item bonuses only (class skill +3 is auto-calculated)
+     - Feats: {always:[], combat:[], special:[], companion:[]}
+       Each: {name:'', desc:''} — write descriptions for NEW players, casual tone
+     - Attack cards: [{name:'CARD TITLE', body:'HTML-formatted attack description'}]
+       Write in GM's casual voice. Include attack formula, damage, conditions, tips.
+     - Resources: [{name:'Ki Pool', max:3, used:0}] — daily-use abilities
+     - Spell levels: [{level:0, slots:4, used:0, spells:'comma-separated list'}]
+     - Companion: populate comp{} if hasComp:true, use compAtkCards[] for companion attacks
+  5. Set hasComp:true / hasPow:true as needed
+  6. Theme accent colors in CSS :root (--accent, --accent-dim, --accent-glow)
+     Gold=#c9a84c, Red=#c44040, Purple=#8a5cb8, Green=#5a9a5a, Blue=#5a8ab4, Teal=#4aada8
+  7. For divine casters (cleric/druid): change 'Cantrips (Lvl 0)' label to 'Orisons (Lvl 0)' in renderPowers()
+  
+  RULES ENCODED IN recalc():
+  - Modifier = floor((score + temp - 10) / 2)
+  - Melee attack = BAB + STR mod + size mod
+  - Ranged attack = BAB + DEX mod + size mod
+  - CMB = BAB + STR mod - size mod (MINUS size for CMB)
+  - CMD = 10 + BAB + STR + DEX - size mod
+  - AC = 10 + armor + shield + DEX(capped) + size + natural + deflect + misc + worn item bonuses
+  - Damage: main=STR, two-handed=floor(STR*1.5), off-hand=floor(STR*0.5)
+  - Size mods: T=+2, S=+1, M=0, L=-1
+  ================================================================
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Wren's Companion</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Crimson+Text:ital,wght@0,400;0,600;0,700;1,400&family=MedievalSharp&display=swap');
+:root{
+  --bg:#1a1714;--card:#23201b;--input:#2e2a24;--accent:#6b8eb5;--accent-dim:#3d5f82;
+  --accent-glow:rgba(107,142,181,.15);--text:#e8e0d0;--text2:#a89e8c;--dim:#6d6456;
+  --border:#3a352e;--red:#c44040;--green:#5a9a5a;--blue:#5a8ab4;
+  --tab-h:60px;--hdr-h:44px;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{background:var(--bg);color:var(--text);font-family:'Crimson Text',Georgia,serif;
+  height:100vh;width:100vw;overflow:hidden;user-select:none;font-size:16px}
+
+/* TIP ICON */
+.tip-btn{display:inline-flex;align-items:center;justify-content:center;
+  width:16px;height:16px;border-radius:50%;background:var(--input);
+  border:1px solid var(--border);color:var(--dim);font-size:9px;
+  font-family:'Cinzel',serif;cursor:pointer;flex-shrink:0;margin-left:4px;
+  vertical-align:middle;line-height:1}
+.tip-btn:active{background:var(--accent-glow);border-color:var(--accent);color:var(--accent)}
+
+/* SETUP */
+.setup-overlay{position:fixed;inset:0;z-index:1000;background:var(--bg);
+  display:flex;flex-direction:column;overflow-y:auto;transition:opacity .4s}
+.setup-overlay.hidden{opacity:0;pointer-events:none}
+.setup-inner{max-width:400px;width:90%;margin:0 auto;padding:40px 0 100px}
+.setup-title{font-family:'Cinzel',serif;font-size:1.6rem;color:var(--accent);text-align:center;margin-bottom:8px}
+.setup-subtitle{text-align:center;color:var(--text2);font-size:.95rem;margin-bottom:30px}
+.setup-section{margin-bottom:24px}
+.setup-section h3{font-family:'Cinzel',serif;font-size:.85rem;color:var(--accent);
+  letter-spacing:1px;text-transform:uppercase;margin-bottom:12px;
+  border-bottom:1px solid var(--border);padding-bottom:6px}
+.setup-row{display:flex;gap:10px;margin-bottom:10px}
+.setup-field{flex:1;display:flex;flex-direction:column}
+.setup-field label{font-size:.75rem;color:var(--text2);margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px}
+.setup-field input,.setup-field select{background:var(--input);border:1px solid var(--border);
+  color:var(--text);padding:10px;border-radius:4px;font-family:'Crimson Text',serif;font-size:1rem}
+.setup-field input:focus,.setup-field select:focus{outline:none;border-color:var(--accent)}
+.setup-field select{appearance:none}
+.setup-ability-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.setup-ability-item{display:flex;align-items:center;gap:8px;background:var(--input);
+  border:1px solid var(--border);border-radius:4px;padding:8px 10px}
+.setup-ability-item .abl-name{font-family:'Cinzel',serif;font-size:.7rem;color:var(--accent);width:32px;letter-spacing:1px}
+.setup-ability-item input{width:50px;text-align:center;background:transparent;border:1px solid var(--border);
+  color:var(--text);border-radius:3px;padding:4px;font-size:1rem;font-family:'Crimson Text',serif}
+.setup-ability-item .abl-mod{color:var(--text2);font-size:.9rem;min-width:28px;text-align:center}
+.setup-toggle-row{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)}
+.setup-toggle-row span{font-size:.95rem}
+.toggle-switch{width:44px;height:24px;background:var(--input);border:1px solid var(--border);
+  border-radius:12px;position:relative;cursor:pointer;transition:background .2s}
+.toggle-switch.on{background:var(--accent-dim);border-color:var(--accent)}
+.toggle-switch::after{content:'';position:absolute;width:18px;height:18px;border-radius:50%;
+  background:var(--text2);top:2px;left:2px;transition:transform .2s,background .2s}
+.toggle-switch.on::after{transform:translateX(20px);background:var(--accent)}
+.setup-btn{display:block;width:100%;padding:14px;background:var(--accent);color:var(--bg);
+  border:none;border-radius:4px;font-family:'Cinzel',serif;font-size:1rem;font-weight:700;
+  cursor:pointer;margin-top:30px;letter-spacing:1px}
+.setup-btn:active{opacity:.8}
+
+/* APP */
+.app-container{display:flex;flex-direction:column;height:100vh}
+.app-header{height:var(--hdr-h);background:var(--card);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;padding:0 16px;flex-shrink:0;position:relative}
+.header-name{font-family:'Cinzel',serif;font-size:.95rem;color:var(--accent);letter-spacing:1px;margin-left:46px}
+.header-info{font-size:.75rem;color:var(--text2);margin-left:8px}
+.header-edit-btn{position:absolute;right:12px;background:none;border:none;color:var(--dim);font-size:1.1rem;cursor:pointer;padding:4px 8px}
+.tab-content-area{flex:1;overflow-y:auto;overflow-x:hidden;padding:12px 14px 20px;
+  -webkit-overflow-scrolling:touch;position:relative;z-index:1}
+.tab-page{display:none}.tab-page.active{display:block}
+.tab-bar{height:var(--tab-h);background:var(--card);border-top:1px solid var(--border);
+  display:flex;overflow-x:auto;flex-shrink:0;-webkit-overflow-scrolling:touch;
+  scrollbar-width:none;padding-bottom:env(safe-area-inset-bottom,0)}
+.tab-bar::-webkit-scrollbar{display:none}
+.tab-item{flex:0 0 auto;min-width:64px;padding:6px 12px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;color:var(--dim);font-size:.58rem;
+  font-family:'Cinzel',serif;letter-spacing:.5px;text-transform:uppercase;cursor:pointer;
+  transition:color .2s;border:none;background:none;white-space:nowrap}
+.tab-item.active{color:var(--accent)}
+.tab-icon{font-size:1.2rem;margin-bottom:2px}
+.char-bg{position:fixed;top:var(--hdr-h);left:0;right:0;bottom:var(--tab-h);z-index:0;
+  pointer-events:none;opacity:.06;background-size:cover;background-position:center top;background-repeat:no-repeat}
+
+/* SHARED */
+.section-title{font-family:'Cinzel',serif;font-size:.8rem;color:var(--accent);letter-spacing:1.5px;
+  text-transform:uppercase;margin:16px 0 10px;border-bottom:1px solid var(--border);padding-bottom:5px}
+.section-title:first-child{margin-top:4px}
+.stat-card{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:8px}
+.inline-stat{display:flex;justify-content:space-between;align-items:center;padding:7px 0;
+  border-bottom:1px solid rgba(58,53,46,.5)}
+.inline-stat:last-child{border-bottom:none}
+.inline-stat .label{font-size:.85rem;color:var(--text2);display:flex;align-items:center;gap:2px}
+.inline-stat .value{font-size:1rem;font-weight:600;color:var(--text);min-width:40px;text-align:center}
+.ev{background:var(--input);border:1px solid var(--border);border-radius:3px;padding:3px 8px;
+  color:var(--text);font-family:'Crimson Text',serif;font-size:1rem;width:55px;text-align:center;font-weight:600}
+.ev:focus{outline:none;border-color:var(--accent)}
+.cv{color:var(--accent);font-weight:700}
+
+/* HP */
+.hp-tracker{display:flex;align-items:center;justify-content:center;gap:12px;padding:12px;
+  background:var(--card);border:1px solid var(--border);border-radius:8px;margin-bottom:10px}
+.hp-btn{width:40px;height:40px;border-radius:50%;border:2px solid var(--border);background:var(--input);
+  color:var(--text);font-size:1.4rem;display:flex;align-items:center;justify-content:center;
+  cursor:pointer;font-family:'Crimson Text',serif}
+.hp-btn.minus{border-color:var(--red);color:var(--red)}
+.hp-btn.plus{border-color:var(--green);color:var(--green)}
+.hp-btn:active{opacity:.6}
+.hp-display{text-align:center}
+.hp-display .hp-label{font-family:'Cinzel',serif;font-size:.65rem;color:var(--dim);letter-spacing:1px;text-transform:uppercase}
+.hp-display .hp-numbers{font-size:1.8rem;font-weight:700}
+.hp-current{color:var(--green)}.hp-slash{color:var(--dim);margin:0 2px}.hp-max{color:var(--text2)}
+
+/* ABILITY GRID */
+.ability-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px}
+.ability-box{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px;
+  display:flex;align-items:center;gap:6px}
+.ability-box .ab-label{font-family:'Cinzel',serif;font-size:.65rem;color:var(--accent);letter-spacing:1px;width:30px}
+.ability-box .ab-score{width:38px}
+.ability-box .ab-mod{font-size:1.1rem;font-weight:700;color:var(--text);min-width:30px;text-align:center}
+
+/* WIELDING SELECTOR */
+.wield-row{display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap}
+.wield-btn{padding:6px 10px;border-radius:4px;border:1px solid var(--border);background:var(--input);
+  color:var(--dim);font-family:'Cinzel',serif;font-size:.65rem;cursor:pointer;text-transform:uppercase;letter-spacing:.5px}
+.wield-btn.active{border-color:var(--accent);color:var(--accent);background:var(--accent-glow)}
+
+/* ATTACK CARDS */
+.attack-card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:10px;cursor:pointer}
+.attack-card-header{font-family:'Cinzel',serif;font-size:.9rem;color:var(--accent);margin-bottom:8px;
+  border-bottom:1px solid var(--border);padding-bottom:6px}
+.attack-card-body{font-size:.9rem;line-height:1.5;color:var(--text2)}
+.attack-card-body strong{color:var(--text)}
+
+/* GEAR */
+.gear-item{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(58,53,46,.4)}
+.gear-item-name{flex:1;font-size:.9rem}
+.gear-item-weight{font-size:.8rem;color:var(--dim);min-width:40px;text-align:right}
+.gear-item-remove{background:none;border:none;color:var(--red);font-size:1rem;cursor:pointer;padding:2px 6px;opacity:.5}
+.gear-item-remove:active{opacity:1}
+.add-btn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:10px;
+  background:var(--input);border:1px dashed var(--border);border-radius:6px;color:var(--dim);
+  font-family:'Crimson Text',serif;font-size:.9rem;cursor:pointer;margin-top:8px}
+.add-btn:active{border-color:var(--accent);color:var(--accent)}
+
+/* EQUIP SLOTS */
+.slot-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px}
+.slot-box{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 10px;
+  cursor:pointer;min-height:44px}
+.slot-box:active{border-color:var(--accent)}
+.slot-label{font-family:'Cinzel',serif;font-size:.6rem;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px}
+.slot-item{font-size:.8rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.slot-item.empty{color:var(--dim);font-style:italic;font-size:.75rem}
+.slot-box.filled .slot-item{color:var(--text)}
+
+/* SKILLS */
+.skill-row{display:flex;align-items:center;gap:4px;padding:5px 0;border-bottom:1px solid rgba(58,53,46,.3);font-size:.82rem}
+.skill-cs{min-width:22px;height:18px;border-radius:2px;border:1px solid var(--border);background:var(--input);
+  flex-shrink:0;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  font-size:.5rem;color:var(--dim);font-family:'Cinzel',serif;letter-spacing:.5px}
+.skill-cs.checked{background:var(--accent-glow);border-color:var(--accent);color:var(--accent)}
+.skill-name{flex:1;color:var(--text2)}
+.skill-total{min-width:28px;text-align:center;font-weight:700;color:var(--accent)}
+.skill-header{display:flex;align-items:center;gap:4px;padding:4px 0;font-size:.6rem;color:var(--dim);
+  text-transform:uppercase;letter-spacing:.5px;font-family:'Cinzel',serif}
+
+/* FEATS */
+.feat-section{margin-bottom:8px}
+.feat-section-header{display:flex;align-items:center;gap:8px;padding:8px 0;cursor:pointer}
+.feat-section-header .chevron{color:var(--accent);font-size:.8rem;transition:transform .2s}
+.feat-section-header .chevron.open{transform:rotate(90deg)}
+.feat-section-header .section-name{font-family:'Cinzel',serif;font-size:.75rem;color:var(--text2);
+  letter-spacing:1px;text-transform:uppercase}
+.feat-list{overflow:hidden}.feat-list.collapsed{max-height:0}
+.feat-item{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:6px}
+.feat-item-name{font-weight:700;color:var(--text);margin-bottom:3px}
+.feat-item-desc{font-size:.85rem;color:var(--text2);line-height:1.4}
+
+/* POWERS */
+.resource-tracker{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:8px}
+.resource-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.resource-name{font-weight:700;font-size:.9rem}
+.resource-pips{display:flex;gap:4px;flex-wrap:wrap}
+.resource-pip{width:24px;height:24px;border-radius:4px;border:1px solid var(--accent-dim);
+  background:var(--input);cursor:pointer;transition:background .15s}
+.resource-pip.used{background:var(--accent-dim);opacity:.4}
+.long-rest-btn{display:block;width:100%;padding:12px;background:var(--input);border:1px solid var(--accent-dim);
+  color:var(--accent);border-radius:6px;font-family:'Cinzel',serif;font-size:.85rem;
+  cursor:pointer;text-transform:uppercase;letter-spacing:1px;margin-top:16px}
+.long-rest-btn:active{background:var(--accent-glow)}
+
+/* DICE */
+.dice-fab{position:fixed;bottom:calc(var(--tab-h) + env(safe-area-inset-bottom,0px) + 14px);
+  right:14px;z-index:500;width:50px;height:50px;border-radius:50%;background:var(--accent);
+  color:var(--bg);border:none;font-size:1.2rem;cursor:pointer;
+  box-shadow:0 4px 16px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;
+  font-family:'MedievalSharp',serif}
+.dice-fab:active{transform:scale(.9)}
+.dice-overlay{position:fixed;inset:0;z-index:600;background:rgba(0,0,0,.7);
+  display:flex;align-items:flex-end;justify-content:center;
+  opacity:0;pointer-events:none;transition:opacity .25s}
+.dice-overlay.open{opacity:1;pointer-events:auto}
+.dice-panel{width:100%;max-width:440px;background:var(--card);border-top:2px solid var(--accent);
+  border-radius:16px 16px 0 0;padding:20px 16px;
+  padding-bottom:calc(20px + env(safe-area-inset-bottom,0px));
+  transform:translateY(100%);transition:transform .3s ease}
+.dice-overlay.open .dice-panel{transform:translateY(0)}
+.dice-result-area{text-align:center;min-height:70px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;margin-bottom:16px}
+.dice-result-number{font-family:'Cinzel',serif;font-size:3rem;font-weight:900;color:var(--accent);transition:transform .2s}
+.dice-result-number.rolling{animation:diceRoll .1s ease infinite}
+@keyframes diceRoll{0%{transform:rotate(-8deg) scale(1.1)}25%{transform:rotate(6deg) scale(.95)}
+  50%{transform:rotate(-4deg) scale(1.05)}75%{transform:rotate(8deg) scale(.9)}100%{transform:rotate(-6deg) scale(1.1)}}
+.dice-result-breakdown{font-size:.8rem;color:var(--dim);margin-top:2px}
+.dice-buttons{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+.dice-btn{padding:12px 4px;border-radius:6px;background:var(--input);border:1px solid var(--border);
+  color:var(--text);font-family:'Cinzel',serif;font-size:.85rem;cursor:pointer;
+  display:flex;align-items:center;justify-content:center}
+.dice-btn:active{background:var(--accent-glow);border-color:var(--accent)}
+.dice-count-row{display:flex;gap:8px;align-items:center;margin-bottom:12px}
+.dice-count-btn{width:32px;height:32px;border-radius:4px;background:var(--input);border:1px solid var(--border);
+  color:var(--text);font-size:1.1rem;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.dice-count-btn:active{border-color:var(--accent)}
+.dice-count-display{font-size:1.1rem;min-width:30px;text-align:center;color:var(--accent)}
+.dice-history{max-height:80px;overflow-y:auto;margin-top:8px;border-top:1px solid var(--border);padding-top:8px}
+.dice-history-item{font-size:.75rem;color:var(--dim);padding:2px 0}
+
+/* TOOLTIP */
+.tooltip-overlay{position:fixed;inset:0;z-index:800;background:rgba(0,0,0,.5);
+  display:flex;align-items:center;justify-content:center;padding:30px;
+  opacity:0;pointer-events:none;transition:opacity .2s}
+.tooltip-overlay.show{opacity:1;pointer-events:auto}
+.tooltip-box{background:var(--card);border:1px solid var(--accent);border-radius:8px;padding:16px 18px;
+  max-width:320px;width:100%;box-shadow:0 8px 32px rgba(0,0,0,.6)}
+.tooltip-title{font-family:'Cinzel',serif;font-size:.85rem;color:var(--accent);margin-bottom:6px}
+.tooltip-text{font-size:.9rem;color:var(--text2);line-height:1.5}
+
+/* MODAL */
+.modal-overlay{position:fixed;inset:0;z-index:700;background:rgba(0,0,0,.6);
+  display:flex;align-items:center;justify-content:center;padding:20px;
+  opacity:0;pointer-events:none;transition:opacity .2s}
+.modal-overlay.show{opacity:1;pointer-events:auto}
+.modal-box{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:20px;
+  max-width:360px;width:100%;max-height:85vh;overflow-y:auto}
+.modal-title{font-family:'Cinzel',serif;font-size:.9rem;color:var(--accent);margin-bottom:14px}
+.modal-field{margin-bottom:10px}
+.modal-field label{display:block;font-size:.75rem;color:var(--text2);margin-bottom:3px;text-transform:uppercase}
+.modal-field input,.modal-field select,.modal-field textarea{width:100%;background:var(--input);
+  border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:4px;
+  font-family:'Crimson Text',serif;font-size:1rem}
+.modal-field textarea{height:60px;resize:vertical}
+.modal-field input:focus,.modal-field textarea:focus{outline:none;border-color:var(--accent)}
+.modal-actions{display:flex;gap:8px;margin-top:14px}
+.modal-btn{flex:1;padding:10px;border-radius:4px;font-family:'Cinzel',serif;font-size:.85rem;cursor:pointer;text-align:center}
+.modal-btn.primary{background:var(--accent);color:var(--bg);border:none;font-weight:700}
+.modal-btn.secondary{background:transparent;color:var(--text2);border:1px solid var(--border)}
+.modal-btn:active{opacity:.7}
+
+/* GOLD */
+.gold-row{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--card);
+  border:1px solid var(--border);border-radius:6px;margin-bottom:10px}
+.gold-label{font-family:'Cinzel',serif;font-size:.8rem;color:var(--accent);letter-spacing:1px}
+.gold-input{width:90px}
+
+/* SUB TABS */
+.sub-tabs{display:flex;gap:0;margin-bottom:12px;border-bottom:1px solid var(--border)}
+.sub-tab{padding:8px 14px;font-family:'Cinzel',serif;font-size:.7rem;color:var(--dim);
+  text-transform:uppercase;letter-spacing:.5px;cursor:pointer;border-bottom:2px solid transparent;
+  background:none;border-top:none;border-left:none;border-right:none}
+.sub-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+/* CHARACTER BANNER */
+.char-banner{position:relative;width:calc(100% + 28px);margin:-12px -14px 12px;
+  height:280px;overflow:hidden;border-bottom:2px solid var(--accent-dim)}
+.char-banner-img{width:100%;height:100%;object-fit:cover;object-position:center 12%;
+  filter:brightness(.6);display:block}
+.char-banner-gradient{position:absolute;inset:0;cursor:pointer;
+  background:linear-gradient(to top,var(--bg) 0%,transparent 50%,rgba(26,23,20,.3) 100%)}
+.char-banner-info{position:absolute;bottom:12px;left:16px;right:16px;pointer-events:none}
+.char-banner-name{font-family:'Cinzel',serif;font-size:1.4rem;font-weight:900;
+  color:var(--accent);text-shadow:0 2px 8px rgba(0,0,0,.8);line-height:1.2}
+.char-banner-sub{font-size:.85rem;color:var(--text2);text-shadow:0 1px 4px rgba(0,0,0,.8);margin-top:2px}
+.char-banner-placeholder{width:100%;height:100%;
+  background:linear-gradient(135deg,#1a1714 0%,#2e2a24 50%,#1a1714 100%);
+  display:flex;align-items:center;justify-content:center}
+.char-banner-placeholder span{font-family:'Cinzel',serif;font-size:3rem;color:var(--accent-dim);opacity:.3}
+
+/* FULLSCREEN CARD OVERLAY */
+.card-overlay{position:fixed;inset:0;z-index:550;background:rgba(0,0,0,.95);
+  opacity:0;pointer-events:none;transition:opacity .3s;display:flex;flex-direction:column}
+.card-overlay.open{opacity:1;pointer-events:auto}
+.card-overlay-close{position:absolute;top:12px;right:16px;z-index:10;
+  background:none;border:none;color:var(--text2);font-size:1.6rem;cursor:pointer;padding:8px}
+.card-carousel{flex:1;position:relative;overflow:hidden;touch-action:pan-y}
+.card-slide{position:absolute;inset:0;display:flex;align-items:flex-start;justify-content:center;
+  padding:20px;padding-top:50px;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  transition:transform .35s ease,opacity .35s ease;opacity:0;pointer-events:none}
+.card-slide.active{opacity:1;pointer-events:auto;transform:translateX(0)}
+.card-slide.left{transform:translateX(-100%);opacity:0}
+.card-slide.right{transform:translateX(100%);opacity:0}
+.card-fullscreen{width:100%;max-width:400px;border-radius:12px;
+  padding:28px 24px;display:flex;flex-direction:column;position:relative;margin-bottom:20px}
+.card-fs-bg{position:absolute;inset:0;z-index:0;border-radius:12px;
+  background:linear-gradient(145deg,#2a2318 0%,#1e1a14 30%,#2a2318 60%,#1a1610 100%);
+  border:1px solid var(--accent-dim)}
+.card-fs-bg::before{content:'';position:absolute;inset:0;border-radius:12px;
+  background:rgba(20,16,12,.55);opacity:1;z-index:1}
+.card-fs-bg::after{content:'';position:absolute;inset:0;border-radius:12px;
+  background:radial-gradient(ellipse at 30% 20%,rgba(201,168,76,.06) 0%,transparent 60%),
+  radial-gradient(ellipse at 70% 80%,rgba(201,168,76,.04) 0%,transparent 50%)}
+.card-fs-content{position:relative;z-index:2}
+.card-fs-title{font-family:'Cinzel',serif;font-size:1.3rem;font-weight:900;color:var(--accent);
+  text-align:center;margin-bottom:16px;padding-bottom:12px;
+  border-bottom:1px solid var(--accent-dim);letter-spacing:2px;text-transform:uppercase}
+.card-fs-body{font-family:'Crimson Text',serif;font-size:1.05rem;line-height:1.7;
+  color:var(--text2);white-space:pre-wrap}
+.card-fs-body strong,.card-fs-body b{color:var(--text)}
+.card-pips{display:flex;justify-content:center;gap:8px;padding:16px 0;
+  padding-bottom:calc(16px + env(safe-area-inset-bottom,0px))}
+.card-pip{width:8px;height:8px;border-radius:50%;background:var(--dim);transition:background .2s}
+.card-pip.active{background:var(--accent)}
+
+/* TAP HINT FOR CARDS */
+.cards-tap-area{cursor:pointer;position:relative}
+.cards-tap-hint{text-align:center;font-size:.7rem;color:var(--dim);font-style:italic;
+  margin-top:6px;font-family:'Cinzel',serif;letter-spacing:.5px}
+
+.hidden{display:none!important}
+
+/* COMPANION PORTRAIT */
+.comp-portrait-wrap{display:flex;justify-content:center;margin-bottom:12px}
+.comp-portrait{display:block;max-width:100%;max-height:340px;width:auto;height:auto;border-radius:14px;border:2px solid var(--accent-dim);
+  cursor:pointer;transition:border-color .2s;box-shadow:0 6px 18px rgba(0,0,0,.45)}
+.comp-portrait:active{border-color:var(--accent)}
+
+/* NOTES */
+.notes-area{width:100%;min-height:calc(100vh - 200px);background:var(--input);border:1px solid var(--border);
+  border-radius:6px;color:var(--text);font-family:'Crimson Text',serif;font-size:1rem;
+  padding:12px;resize:vertical;line-height:1.6}
+.notes-area:focus{outline:none;border-color:var(--accent)}
+
+/* ENLARGE TOGGLE */
+.enlarge-row{display:flex;align-items:center;justify-content:center;gap:10px;padding:8px 12px;
+  background:var(--card);border:1px solid var(--border);border-radius:6px;margin-bottom:8px;cursor:pointer;
+  transition:all .3s}
+.enlarge-row.active{background:rgba(90,138,180,.15);border-color:var(--blue);
+  box-shadow:0 0 12px rgba(90,138,180,.3)}
+.enlarge-label{font-family:'Cinzel',serif;font-size:.8rem;color:var(--dim);letter-spacing:1px;text-transform:uppercase;
+  transition:color .3s}
+.enlarge-row.active .enlarge-label{color:var(--blue);font-weight:700}
+.enlarge-toggle{width:44px;height:24px;background:var(--input);border:1px solid var(--border);
+  border-radius:12px;position:relative;transition:background .2s,border-color .2s;flex-shrink:0}
+.enlarge-toggle.on{background:var(--blue);border-color:var(--blue)}
+.enlarge-toggle::after{content:'';position:absolute;width:18px;height:18px;border-radius:50%;
+  background:var(--text2);top:2px;left:2px;transition:transform .2s,background .2s}
+.enlarge-toggle.on::after{transform:translateX(20px);background:#fff}
+.enlarge-banner{display:none;text-align:center;padding:6px 12px;background:rgba(90,138,180,.2);
+  border:1px solid var(--blue);border-radius:6px;margin-bottom:8px;font-family:'Cinzel',serif;
+  font-size:.75rem;color:var(--blue);letter-spacing:1px;text-transform:uppercase;
+  animation:enlargePulse 2s infinite}
+.enlarge-banner.show{display:block}
+@keyframes enlargePulse{0%,100%{opacity:1}50%{opacity:.6}}
+.app-header.enlarged{background:rgba(90,138,180,.2);border-bottom-color:var(--blue)}
+/* EXTRACT & MUTAGEN & BOMB UI */
+.bomb-item,.extract-item{display:inline-flex;align-items:center;gap:4px;background:var(--input);
+  border:1px solid var(--border);border-radius:4px;padding:5px 10px;margin:3px;
+  font-size:.85rem;color:var(--text);cursor:pointer;transition:all .2s}
+.bomb-item:active,.extract-item:active{background:var(--accent-glow);border-color:var(--accent)}
+.extract-item.consumed,.bomb-item.consumed{opacity:.25;text-decoration:line-through;pointer-events:none}
+.mut-btn{display:flex;flex-direction:column;align-items:center;gap:2px;
+  background:var(--input);border:1px solid var(--border);border-radius:6px;
+  padding:10px 14px;color:var(--text);cursor:pointer;transition:all .2s;flex:1}
+.mut-btn:active,.mut-btn.active{background:var(--accent-glow);border-color:var(--accent)}
+.mut-btn .mut-stat{font-family:'Cinzel',serif;font-size:1rem;font-weight:700;color:var(--accent)}
+.mut-btn .mut-detail{font-size:.7rem;color:var(--text2);text-align:center}
+.mut-row{display:flex;gap:8px;margin-bottom:8px}
+.mut-end{display:block;width:100%;padding:8px;background:var(--red);color:var(--bg);
+  border:none;border-radius:4px;font-family:'Cinzel',serif;font-size:.8rem;cursor:pointer;margin-top:6px}
+.extract-level-header{font-family:'Cinzel',serif;font-size:.8rem;color:var(--accent);
+  margin:10px 0 4px;letter-spacing:.5px}
+.prep-modal-level{margin:12px 0;padding:8px;background:var(--input);border-radius:6px}
+.prep-modal-level h4{font-family:'Cinzel',serif;font-size:.8rem;color:var(--accent);margin-bottom:6px}
+.prep-slot{display:flex;align-items:center;gap:6px;margin:4px 0}
+.prep-slot select{background:var(--input);border:1px solid var(--border);color:var(--text);
+  padding:6px;border-radius:4px;font-family:'Crimson Text',serif;font-size:.9rem;flex:1}
+</style>
+</head>
+<body>
+
+<!-- SETUP -->
+<div class="setup-overlay hidden" id="setupScreen">
+<div class="setup-inner">
+  <div class="setup-title">Pathfinder Companion</div>
+  <div class="setup-subtitle">Enter your character info to get started</div>
+  <div class="setup-section"><h3>Identity</h3>
+    <div class="setup-row"><div class="setup-field"><label>Name</label><input id="s-name" placeholder="Character Name"></div></div>
+    <div class="setup-row">
+      <div class="setup-field"><label>Race</label><input id="s-race" placeholder="Human"></div>
+      <div class="setup-field"><label>Size</label><select id="s-size"><option value="M">Medium</option><option value="S">Small</option><option value="T">Tiny</option><option value="L">Large</option></select></div>
+    </div>
+    <div class="setup-row">
+      <div class="setup-field"><label>Class</label><input id="s-class" placeholder="Fighter"></div>
+      <div class="setup-field"><label>Level</label><input id="s-level" type="number" value="3" min="1" max="20"></div>
+    </div>
+    <div class="setup-row">
+      <div class="setup-field"><label>Deity</label><input id="s-deity" placeholder="None"></div>
+      <div class="setup-field"><label>Speed (ft)</label><input id="s-speed" type="number" value="30"></div>
+    </div>
+  </div>
+  <div class="setup-section"><h3>Ability Scores</h3><div class="setup-ability-grid" id="setupAbilities"></div></div>
+  <div class="setup-section"><h3>Combat Basics</h3>
+    <div class="setup-row">
+      <div class="setup-field"><label>Max HP</label><input id="s-maxhp" type="number" value="20"></div>
+      <div class="setup-field"><label>BAB</label><input id="s-bab" type="number" value="0"></div>
+    </div>
+    <h3>Saving Throws (Base)</h3>
+    <div class="setup-row">
+      <div class="setup-field"><label>Fort</label><input id="s-fort-base" type="number" value="0"></div>
+      <div class="setup-field"><label>Ref</label><input id="s-ref-base" type="number" value="0"></div>
+      <div class="setup-field"><label>Will</label><input id="s-will-base" type="number" value="0"></div>
+    </div>
+  </div>
+  <div class="setup-section"><h3>Options</h3>
+    <div class="setup-toggle-row"><span>I have a companion creature</span><div class="toggle-switch" id="s-companion" onclick="this.classList.toggle('on')"></div></div>
+    <div class="setup-toggle-row"><span>I use spells or daily powers</span><div class="toggle-switch" id="s-powers" onclick="this.classList.toggle('on')"></div></div>
+  </div>
+  <div class="setup-section"><h3>Languages</h3><div class="setup-field"><input id="s-languages" placeholder="Common, Elven"></div></div>
+  <div class="setup-section"><h3>Special Senses</h3><div class="setup-field"><input id="s-senses" placeholder="Darkvision 60 ft."></div></div>
+  <button class="setup-btn" onclick="completeSetup()">Begin Adventure</button>
+</div>
+</div>
+
+<!-- MAIN APP -->
+<div class="app-container" id="appContainer" style="display:flex">
+<div class="char-bg" id="charBg"></div>
+<div class="app-header">
+  <button class="header-edit-btn" style="left:12px;right:auto" onclick="openThemePicker()" title="Theme">🎨</button>
+  <span class="header-name" id="headerName">Character</span>
+  <span class="header-info" id="headerInfo"></span>
+  <button class="header-edit-btn" onclick="openSettings()">⚙</button>
+</div>
+<div class="tab-content-area" id="contentArea">
+
+  <!-- CHARACTER -->
+  <div class="tab-page active" id="page-character">
+    <div class="char-banner" id="charBanner">
+      <div class="char-banner-placeholder"><span>⚔</span></div>
+      <div class="char-banner-gradient"></div>
+      <div class="char-banner-info">
+        <div class="char-banner-name" id="bannerName">Character</div>
+        <div class="char-banner-sub" id="bannerSub">Race Class Level</div>
+      </div>
+    </div>
+    <div class="hp-tracker">
+      <button class="hp-btn minus" onclick="adjHP(-1)">−</button>
+      <div class="hp-display"><div class="hp-label">Hit Points</div>
+        <div class="hp-numbers"><span class="hp-current" id="hpCur">20</span><span class="hp-slash">/</span><span class="hp-max" id="hpMax">20</span></div>
+      </div>
+      <button class="hp-btn plus" onclick="adjHP(1)">+</button>
+    </div>
+    <div class="section-title">Ability Scores</div>
+    <div class="ability-grid" id="abilityGrid"></div>
+    <div class="section-title">Combat Overview</div>
+    <div class="stat-card">
+      <div class="inline-stat"><span class="label">Initiative <span class="tip-btn" onclick="tip('Initiative','Rolled at the start of combat to determine turn order. d20 + this bonus. DEX mod + Misc.')">?</span></span><span class="value cv" id="dv-init">+0</span></div>
+      <div class="inline-stat"><span class="label">Init Misc <span class="tip-btn" onclick="tip('Init Misc','Add bonuses here from traits like Reactionary (+2), feats like Improved Initiative (+4), or other effects.')">?</span></span><span class="value"><input class="ev" id="dv-initmisc" type="number" value="0" onchange="S.initMisc=+this.value||0;recalc()" style="width:45px"></span></div>
+      <div class="inline-stat"><span class="label">Speed <span class="tip-btn" onclick="tip('Speed','How far you can move in a single move action, measured in feet. One square on a grid = 5 feet.')">?</span></span><span class="value" id="dv-speed">30 ft.</span></div>
+    </div>
+    <div class="section-title">Saving Throws</div>
+    <div class="stat-card" id="savesCard"></div>
+    <div class="section-title">Info</div>
+    <div class="stat-card">
+      <div class="inline-stat"><span class="label">Size</span><span class="value" id="dv-size">Medium</span></div>
+      <div class="inline-stat"><span class="label">Senses</span><span class="value" id="dv-senses" style="font-size:.8rem;text-align:right;max-width:60%">—</span></div>
+      <div class="inline-stat"><span class="label">Languages</span><span class="value" id="dv-lang" style="font-size:.8rem;text-align:right;max-width:60%">Common</span></div>
+      <div class="inline-stat"><span class="label">XP</span><span class="value"><input class="ev" id="dv-xp" type="number" value="0" onchange="save()"></span></div>
+      <div class="inline-stat"><span class="label">Next Level</span><span class="value"><input class="ev" id="dv-xpn" type="number" value="9000" onchange="save()"></span></div>
+    </div>
+    <button onclick="exportToGM()" style="width:100%;margin-top:16px;padding:10px;background:var(--input);color:var(--text2);border:1px solid var(--dim);border-radius:8px;font-family:'Crimson Text',Georgia,serif;font-size:.9rem;cursor:pointer">⬇ Export to GM Suite</button>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button onclick="backupData()" style="flex:1;padding:10px;background:var(--input);color:var(--text2);border:1px solid var(--dim);border-radius:8px;font-family:'Crimson Text',Georgia,serif;font-size:.85rem;cursor:pointer">💾 Backup</button>
+      <button onclick="restoreData()" style="flex:1;padding:10px;background:var(--input);color:var(--text2);border:1px solid var(--dim);border-radius:8px;font-family:'Crimson Text',Georgia,serif;font-size:.85rem;cursor:pointer">📂 Restore</button>
+    </div>
+  </div>
+
+  <!-- ATTACK -->
+  <div class="tab-page" id="page-attack">
+    <div class="section-title">Wielding Mode</div>
+    <div class="wield-row" id="wieldRow">
+      <button class="wield-btn active" onclick="setWield('main')">Main Hand</button>
+      <button class="wield-btn" onclick="setWield('twohanded')">Two-Handed</button>
+      <button class="wield-btn" onclick="setWield('dualwield')">Dual Wield</button>
+    </div>
+    <div class="section-title">Equipped Weapon(s)</div>
+    <div class="stat-card" id="equippedWeaponCard"><div style="color:var(--dim);font-style:italic;font-size:.9rem">No weapon equipped. Add in Gear tab.</div></div>
+
+    <div class="section-title">Attack Bonuses</div>
+    <div class="stat-card">
+      <div class="inline-stat"><span class="label">BAB <span class="tip-btn" onclick="tip('BAB','Base Attack Bonus. Your core accuracy with weapons. Added to your d20 roll when you attack. Goes up as you level.')">?</span></span><span class="value"><input class="ev" id="dv-bab" type="number" value="0" onchange="save();recalc()"></span></div>
+      <div class="inline-stat"><span class="label">Melee Attack <span class="tip-btn" onclick="tip('Melee Attack','BAB + STR modifier + size modifier.')">?</span></span><span class="value cv" id="dv-matk">+0</span></div>
+      <div class="inline-stat"><span class="label">Ranged Attack <span class="tip-btn" onclick="tip('Ranged Attack','BAB + DEX modifier + size modifier.')">?</span></span><span class="value cv" id="dv-ratk">+0</span></div>
+      <div class="inline-stat"><span class="label">CMB <span class="tip-btn" onclick="tip('CMB','Combat Maneuver Bonus. Roll d20 + this vs their CMD to trip, grapple, disarm, etc.')">?</span></span><span class="value cv" id="dv-cmb">+0</span></div>
+    </div>
+
+    <div class="section-title">Damage Bonuses</div>
+    <div class="stat-card">
+      <div class="inline-stat"><span class="label">Melee Damage <span class="tip-btn" onclick="tip('Melee Damage','STR modifier added to melee damage. ×1.5 for two-handed, ×0.5 for off hand.')">?</span></span><span class="value cv" id="dv-mdmg">+0</span></div>
+      <div class="inline-stat"><span class="label">Off-Hand Damage</span><span class="value cv" id="dv-ohdmg" style="font-size:.85rem">+0</span></div>
+      <div class="inline-stat"><span class="label">Ranged Damage <span class="tip-btn" onclick="tip('Ranged Damage','Usually 0 unless using a composite bow (add STR) or thrown weapon (add STR).')">?</span></span><span class="value"><input class="ev" id="dv-rdmg" type="number" value="0" onchange="save()" style="width:45px"></span></div>
+    </div>
+
+    <div class="section-title">Attack Cards</div>
+    <div id="atkCards"><div style="color:var(--dim);font-style:italic;font-size:.9rem">No attack cards yet.</div></div>
+    <div class="cards-tap-hint" id="atkCardsHint" style="display:none">Tap a card to view full screen · Swipe to browse</div>
+    <button class="add-btn" onclick="event.stopPropagation();openAddCard('player')">+ Add Attack Card</button>
+  </div>
+
+  <!-- DEFENSE -->
+  <div class="tab-page" id="page-defense">
+    <div class="section-title">Equipped Armor & Shield</div>
+    <div class="stat-card" id="eqArmorCard"><div style="color:var(--dim);font-style:italic;font-size:.9rem">No armor equipped.</div></div>
+
+    <div class="section-title">Armor Class</div>
+    <div class="stat-card">
+      <div class="inline-stat"><span class="label">AC <span class="tip-btn" onclick="tip('AC','Armor Class. An enemy must match or beat this to hit you.')">?</span></span><span class="value cv" style="font-size:1.3rem" id="dv-ac">10</span></div>
+      <div class="inline-stat"><span class="label">Touch AC <span class="tip-btn" onclick="tip('Touch AC','AC without armor or shields — just dodge ability. Used against touch spells and special attacks.')">?</span></span><span class="value cv" id="dv-tac">10</span></div>
+      <div class="inline-stat"><span class="label">Flat-Footed <span class="tip-btn" onclick="tip('Flat-Footed AC','AC when caught off guard. No DEX bonus. Applies before your first turn in combat.')">?</span></span><span class="value cv" id="dv-ffac">10</span></div>
+    </div>
+    <div class="section-title">Defense Stats</div>
+    <div class="stat-card">
+      <div class="inline-stat"><span class="label">CMD <span class="tip-btn" onclick="tip('CMD','Combat Maneuver Defense. Enemies must beat this to trip, grapple, or disarm you.')">?</span></span><span class="value cv" id="dv-cmd">10</span></div>
+      <div class="inline-stat"><span class="label">Spell Resistance <span class="tip-btn" onclick="tip('Spell Resistance','Casters must beat this with a caster level check for their spell to affect you.')">?</span></span><span class="value"><input class="ev" id="dv-sr" type="number" value="0" onchange="save()"></span></div>
+      <div class="inline-stat"><span class="label">DR <span class="tip-btn" onclick="tip('DR','Damage Reduction. Reduces physical damage unless the attacker overcomes the listed type.')">?</span></span><span class="value"><input class="ev" id="dv-dr" style="width:70px" onchange="save()"></span></div>
+    </div>
+    <div class="section-title">AC Breakdown</div>
+    <div class="stat-card">
+      <div class="inline-stat"><span class="label">Armor Bonus</span><span class="value"><input class="ev" id="ac-armor" type="number" value="0" onchange="save();recalc()"></span></div>
+      <div class="inline-stat"><span class="label">Shield Bonus</span><span class="value"><input class="ev" id="ac-shield" type="number" value="0" onchange="save();recalc()"></span></div>
+      <div class="inline-stat"><span class="label">Natural Armor</span><span class="value"><input class="ev" id="ac-nat" type="number" value="0" onchange="save();recalc()"></span></div>
+      <div class="inline-stat"><span class="label">Deflection <span class="tip-btn" onclick="tip('Deflection','Bonus to AC from magical effects like Ring of Protection.')">?</span></span><span class="value"><input class="ev" id="ac-defl" type="number" value="0" onchange="save();recalc()"></span></div>
+      <div class="inline-stat"><span class="label">Dodge <span class="tip-btn" onclick="tip('Dodge Bonus','Bonus from Dodge feat and similar effects. Lost when flat-footed or denied DEX. Included in AC and Touch AC but NOT Flat-Footed AC.')">?</span></span><span class="value"><input class="ev" id="ac-dodge" type="number" value="0" onchange="save();recalc()"></span></div>
+      <div class="inline-stat"><span class="label">Misc</span><span class="value"><input class="ev" id="ac-misc" type="number" value="0" onchange="save();recalc()"></span></div>
+      <div class="inline-stat"><span class="label">Max DEX (armor)</span><span class="value"><input class="ev" id="ac-maxdex" type="number" value="99" onchange="save();recalc()" style="width:45px"></span></div>
+      <div class="inline-stat"><span class="label">Worn Items <span class="tip-btn" onclick="tip('Worn Items AC','Auto-calculated from AC bonuses on equipped items in your Armor/Worn slots (excluding Armor and Shield, which have their own fields above).')">?</span></span><span class="value cv" id="dv-worn-ac">0</span></div>
+      <div class="inline-stat"><span class="label">Armor Check Penalty</span><span class="value cv" id="dv-acp">0</span></div>
+      <div class="inline-stat"><span class="label">Spell Failure %</span><span class="value"><input class="ev" id="ac-sf" type="number" value="0" onchange="save()" style="width:45px"></span></div>
+    </div>
+  </div>
+
+  <!-- GEAR -->
+  <div class="tab-page" id="page-gear">
+    <div class="gold-row">
+      <span class="gold-label">GP</span>
+      <input class="ev gold-input" id="dv-gp" type="number" value="0" onchange="save()">
+    </div>
+    <div class="sub-tabs">
+      <button class="sub-tab active" onclick="showGS('weapons')">Weapons</button>
+      <button class="sub-tab" onclick="showGS('equip')">Armor/Worn</button>
+      <button class="sub-tab" onclick="showGS('other')">Equipment</button>
+    </div>
+    <div id="gs-weapons" class="gear-sub">
+      <div id="gearWeaponsList"></div>
+      <button class="add-btn" onclick="openAddGear('weapons')">+ Add Weapon</button>
+    </div>
+    <div id="gs-equip" class="gear-sub hidden">
+      <div class="section-title" style="margin-top:4px">Equipment Slots</div>
+      <div class="slot-grid" id="slotGrid"></div>
+      <div class="section-title">Unequipped</div>
+      <div id="gearEquipList"></div>
+      <button class="add-btn" onclick="openAddGear('equip')">+ Add Armor/Worn Item</button>
+    </div>
+    <div id="gs-other" class="gear-sub hidden">
+      <div id="gearOtherList"></div>
+      <button class="add-btn" onclick="openAddGear('other')">+ Add Equipment</button>
+    </div>
+  </div>
+
+  <!-- SKILLS -->
+  <div class="tab-page" id="page-skills">
+    <div class="skill-header">
+      <span class="skill-cs" style="border:none"></span>
+      <span class="skill-name">Skill</span>
+      <span style="width:30px;text-align:center">Rnk</span>
+      <span style="width:30px;text-align:center">Msc</span>
+      <span style="min-width:28px;text-align:center">Tot</span>
+    </div>
+    <div id="skillsList"></div>
+  </div>
+
+  <!-- FEATS/FEATURES -->
+  <div class="tab-page" id="page-feats">
+    <div class="feat-section"><div class="feat-section-header" onclick="toggleFS('always')"><span class="chevron open" id="chev-always">▶</span><span class="section-name">Always Active</span></div><div class="feat-list" id="feats-always"></div><button class="add-btn" onclick="openAddFeat('always')">+ Add</button></div>
+    <div class="feat-section"><div class="feat-section-header" onclick="toggleFS('combat')"><span class="chevron open" id="chev-combat">▶</span><span class="section-name">In Combat</span></div><div class="feat-list" id="feats-combat"></div><button class="add-btn" onclick="openAddFeat('combat')">+ Add</button></div>
+    <div class="feat-section"><div class="feat-section-header" onclick="toggleFS('special')"><span class="chevron open" id="chev-special">▶</span><span class="section-name">Special / Situational</span></div><div class="feat-list" id="feats-special"></div><button class="add-btn" onclick="openAddFeat('special')">+ Add</button></div>
+  </div>
+
+  <!-- COMPANION -->
+  <div class="tab-page" id="page-companion">
+    <div class="comp-portrait-wrap" id="compPortraitWrap"></div>
+    <div class="section-title">Companion</div>
+    <div class="stat-card">
+      <div class="inline-stat"><span class="label">Name</span><span class="value"><input class="ev" id="comp-name" style="width:100px" onchange="save()"></span></div>
+      <div class="inline-stat"><span class="label">Type</span><span class="value"><input class="ev" id="comp-type" style="width:100px" onchange="save()"></span></div>
+    </div>
+    <div class="hp-tracker" style="margin-top:8px">
+      <button class="hp-btn minus" onclick="adjCHP(-1)">−</button>
+      <div class="hp-display"><div class="hp-label">Companion HP</div>
+        <div class="hp-numbers"><span class="hp-current" id="cHpCur">10</span><span class="hp-slash">/</span><span class="hp-max" id="cHpMax">10</span></div>
+      </div>
+      <button class="hp-btn plus" onclick="adjCHP(1)">+</button>
+    </div>
+    <div class="section-title">Stats</div>
+    <div class="ability-grid" id="compAbGrid"></div>
+    <div class="stat-card">
+      <div class="inline-stat"><span class="label">AC</span><span class="value"><input class="ev" id="comp-ac" type="number" value="10" onchange="save()"></span></div>
+      <div class="inline-stat"><span class="label">Speed</span><span class="value"><input class="ev" id="comp-spd" style="width:65px" onchange="save()"></span></div>
+      <div class="inline-stat"><span class="label">Fort</span><span class="value"><input class="ev" id="comp-fort" type="number" value="0" onchange="save()" style="width:40px"></span></div>
+      <div class="inline-stat"><span class="label">Ref</span><span class="value"><input class="ev" id="comp-ref" type="number" value="0" onchange="save()" style="width:40px"></span></div>
+      <div class="inline-stat"><span class="label">Will</span><span class="value"><input class="ev" id="comp-will" type="number" value="0" onchange="save()" style="width:40px"></span></div>
+    </div>
+    <div class="section-title">Companion Attacks</div>
+    <div id="compAtkCards"><div style="color:var(--dim);font-style:italic;font-size:.9rem">No companion attacks.</div></div>
+    <div class="cards-tap-hint" id="compAtkCardsHint" style="display:none">Tap cards to view full screen</div>
+    <button class="add-btn" onclick="event.stopPropagation();openAddCard('companion')">+ Add Attack</button>
+    <div class="section-title">Abilities</div>
+    <div id="compAbilities"></div>
+    <button class="add-btn" onclick="openAddFeat('companion')">+ Add Ability</button>
+  </div>
+
+  <!-- POWERS -->
+  <div class="tab-page" id="page-powers">
+    <div class="section-title">Daily Resources</div>
+    <div style="color:var(--text2);font-size:.82rem;margin-bottom:8px">Tap a pip to spend or restore it. Arcane Pool fuels enhancement, Spell Recall, and Silvermoth Strike. Resets on New Day.</div>
+    <div id="resSec"></div>
+
+    <div class="section-title" style="margin-top:16px">Prepared Spells</div>
+    <div style="color:var(--text2);font-size:.82rem;margin-bottom:8px">Prepared from your spellbook each morning. Tap a spell to cast it; tap a spent spell again to undo an accidental cast. Cantrips are at-will.</div>
+    <div id="spellSec"></div>
+
+    <button class="long-rest-btn" onclick="newDay()" style="margin-top:16px">⟳ New Day — Reset &amp; Prepare</button>
+  </div>
+
+  <!-- NOTES -->
+  <div class="tab-page" id="page-notes">
+    <div class="section-title" style="margin-top:4px">Notes</div>
+    <textarea class="notes-area" id="notes-text" placeholder="Jot down anything — session notes, reminders, loot splits, NPC names, plans..." oninput="save()"></textarea>
+  </div>
+
+</div>
+<div class="tab-bar" id="tabBar"></div>
+<button class="dice-fab" onclick="toggleDice()">🎲</button>
+</div>
+
+<!-- DICE OVERLAY -->
+<div class="dice-overlay" id="diceOvl" onclick="if(event.target===this)toggleDice()">
+<div class="dice-panel">
+  <div class="dice-result-area">
+    <div class="dice-result-number" id="diceRes">—</div>
+    <div class="dice-result-breakdown" id="diceBrk"></div>
+  </div>
+  <div class="dice-count-row">
+    <button class="dice-count-btn" onclick="diceN=Math.max(1,diceN-1);$('diceND').textContent=diceN">−</button>
+    <span class="dice-count-display" id="diceND">1</span>
+    <button class="dice-count-btn" onclick="diceN=Math.min(20,diceN+1);$('diceND').textContent=diceN">+</button>
+    <span style="font-size:.8rem;color:var(--dim);margin-left:4px">dice</span>
+    <div style="flex:1"></div>
+    <label style="font-size:.8rem;color:var(--text2)">Mod</label>
+    <input id="diceMod" type="number" value="0" style="width:50px;background:var(--input);border:1px solid var(--border);color:var(--text);padding:6px;border-radius:4px;text-align:center;font-size:1rem;font-family:'Crimson Text',serif">
+  </div>
+  <div class="dice-buttons">
+    <button class="dice-btn" onclick="roll(4)">d4</button>
+    <button class="dice-btn" onclick="roll(6)">d6</button>
+    <button class="dice-btn" onclick="roll(8)">d8</button>
+    <button class="dice-btn" onclick="roll(10)">d10</button>
+    <button class="dice-btn" onclick="roll(12)">d12</button>
+    <button class="dice-btn" onclick="roll(20)">d20</button>
+    <button class="dice-btn" onclick="roll(100)">d100</button>
+    <button class="dice-btn" style="font-size:.7rem" onclick="S.diceHist=[];renderDH();$('diceRes').textContent='—';$('diceBrk').textContent='';save()">Clear</button>
+  </div>
+  <div class="dice-history" id="diceHist"></div>
+</div>
+</div>
+
+<!-- FULLSCREEN PORTRAIT -->
+<div class="tooltip-overlay" id="portraitOvl" onclick="this.classList.remove('show')" style="padding:10px">
+  <img id="portraitImg" src="" style="max-width:100%;max-height:90vh;border-radius:8px;border:1px solid var(--accent-dim);object-fit:contain" onclick="event.stopPropagation()">
+</div>
+
+<!-- FULLSCREEN CARD VIEW -->
+<div class="card-overlay" id="cardOverlay">
+  <button class="card-overlay-close" onclick="closeCardView()">✕</button>
+  <div class="card-carousel" id="cardCarousel"></div>
+  <div class="card-pips" id="cardPips"></div>
+</div>
+
+<!-- TOOLTIP -->
+<div class="tooltip-overlay" id="tipOvl" onclick="this.classList.remove('show')">
+<div class="tooltip-box" onclick="event.stopPropagation()">
+  <div class="tooltip-title" id="tipT"></div>
+  <div class="tooltip-text" id="tipX"></div>
+</div>
+</div>
+
+<!-- MODAL -->
+<div class="modal-overlay" id="modOvl" onclick="if(event.target===this)closeMod()">
+<div class="modal-box" id="modBox"></div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+// CHARACTER ID — unique localStorage key
+const CHAR_ID = 'wren-v1';
+const RUNDT_IMG='data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD//gA7Q1JFQVRPUjogZ2QtanBlZyB2MS4wICh1c2luZyBJSkcgSlBFRyB2NjIpLCBxdWFsaXR5ID0gOTUK/9sAQwAMCAkLCQgMCwoLDg0MDhIeFBIRERIlGxwWHiwnLi4rJysqMTdGOzE0QjQqKz1TPkJISk5PTi87VlxVTFtGTU5L/9sAQwENDg4SEBIkFBQkSzIrMktLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tL/8AAEQgDhAJYAwEiAAIRAQMRAf/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/EAB8BAAMBAQEBAQEBAQEAAAAAAAABAgMEBQYHCAkKC//EALURAAIBAgQEAwQHBQQEAAECdwABAgMRBAUhMQYSQVEHYXETIjKBCBRCkaGxwQkjM1LwFWJy0QoWJDThJfEXGBkaJicoKSo1Njc4OTpDREVGR0hJSlNUVVZXWFlaY2RlZmdoaWpzdHV2d3h5eoKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLj5OXm5+jp6vLz9PX29/j5+v/aAAwDAQACEQMRAD8A81NFLRVCEpaKXFACUUtFABS0lOoASlooxQMKKKKBBRRRQMWiiigQUUUtABS0mKWgAoFFAoAWilFFACUooooGJRS0UCCkpaMUAJiloxSigA7UUUUAJRS0UAFJS4oxQAlLS4oxQAlFLijFACUUtFACUUGigAFFHaigBDRRijFABRS0lABRRRQAlFLSGgYUlLikxQIKKKKBhSUtFACUUuKKBCUtFFACUtFFABRRS0AIaSlNJigApKWigY00UtFAEdKKMUtAhKWiigAoooFABS0lLQAUUUtACUUtFAwopaKAEpaKKACloooAKKKWgQUUUtABRRRQAUYopTQAlLRRQAUUYoxQAUooApaAExRTqSgBKKU0lAAKXFAFLQAmKKWkoAKKKWgBKMUtLigBtJinYoxQA3FGKXFFACUUtJQAhpKU0UAJRS0lABRRRQMKSlooEJRRRQAUUtJQAUlLRQAUlLQaAEopaKACloFLQA2kpTRQAlFFFAwooooER0UUUAFFLRQAUUUUDClpKWgAoopaAEpaKKAClpKWgQUUUtACUUpooAKWiigApaKKAENFLiigAAoNKKKAEoxS0uKAEpaKWgAooooASilooAQ0ClFGKAAUUtGKACjFLiigBuKWlooAQUtFBoAKSlpKAEoNLRigBtFOxSUANopTRQAmKQ0tIaAEpaKSgYtJRS0CEopaSgAopaKAG0tFFABRS0UDEooooEApaQUtACUlLRQAlFGKKACiiigZFS0UUCCiiigAoopaACiiigYtFApaAEooooEFLRS0AFKBRSigYmKKWigQgpaSloAKKKKAClxQBSigAxRS0negAxS44oFLQAg6UU6koAO9FLRigBtFOxRQAgFLQKWgBKKKOnWgAooQljhQTSurqOVH50uZFcrEopivu6VJsbGeDRzIOViUUmccHilp3E1YBRR3ooEFFFLQAhpKU0UANxSU6koASkpcUGgBtFLRQA2ilooAKKQ0tABRRxSUAFLSUtABRS0lACUUUtACUtAFKaAG0UppKAEooooAKKWigCKiiigAooooAWiiigBaKKKAFooooAKKKUUAGKMUUtAAKWkFLQAtJRRQAUUUvagBKUClpRxQAlLSUUAHelpB1pwoABS0CigBRQaKSgBCOaWlooAKMUtFADaWlxSE7Rk0ANdggyabGhmb5iQOwFQs3mP7VftGKLuCZA/Ks5M0ihlwRaKNgOfpVZ3ZkDseW6CrLK11cYIIXqfpVWZt8pO3joBnoKksRFcn5TWpZQOww4Bz0xxVCBFZhwymuhsJBBGGBG4ccikxoz7q0ABI6jsaocr7j+Val9dcnjI7j0rLkbkuvKnrTTsJq4vXpS4qewtDNd+Ux/drgsR/KtbXoEitoAkaqAeNo4rZGLVjCooooEJRRRQAhopTSUAFIaU0hoAbRS0lACUUtFACUlLRQAUUlLQAUZoooAWkpaQ0AJSikpcUAFBoozQAZpDS8UhFACUt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';
+const COMP_IMG='data:image/jpeg;base64,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ikAUUUUDCkpaSkAtFJS0CCiiimMKKKKBBRRRSGFFFFMApaSlpCCiiigYUUUUAFLSUtABRRRTAKKKKAIaKKKQBRRRTAKKKKACiiigAooooAKKKKQBRRRTAKWkpaACiiigBaKSlpAFFFFMAooooAWikpaAClpKUUCFpRSUopgKKcKaKcKYhwp60wU8VSJZItSp1FRLUqdqtEs9C8E/8gMf9dWrp4PutXM+Cx/xIk95GrpoPutUyCJm+JhnQr7/AK515U3T8K9W8RjOiX3/AFyNeVP0px2B7kLVE1StUTUmNEZpppxppqShtIaWkqShDRQaKAEooopAFFFFAwooopAJS0lLQAUUUUwCiiigAooooAKWkopALRSUUwFopKWgAooopAFLSUUwFooooAKKKKQiGiiimMKKKKQBRRRTAKKKKACiiigAooooAKKKKAClpKWgAooooAKWkpaACiiigAooooAKWkpaAClpKWgQopRSUopgLThTacKYhwp4pgp4qkSyRalSolqVKtEM9F8GD/iQRe8jfzrpYPutXOeDv+QBB/vt/Oujg+61RIcTP8QDOjX3/XI15Q/SvWddGdIvf+uLV5M3SqjsD3IWqJqlao2oY0RmmGnmmGoKQlNp1JUlDaSlooASiiikAUUUUDCkpaSkAUUtJQAtFFFMAooooAKKKKQBRRRQAUUUUwClpKKAFooooAKKKKAFooooAKKKKBENFFFIYUUUUAFFFFABRRRQAUUUUAFFFFABRRRTAKWiigAooooAKWiikAUUUUwCiiikAUtJS0xAKWkpaYC0opKWgBacKaKcKYhwp60wU8VSJZKtSJUa1IlWiGekeD/+Rft/95v510UP3WrnvCP/ACL9t9W/nXQwfdaokOJS1sZ0m9/64tXkrdBXres86XeD/pi38q8lb7o+lVHYHuQNUbVK1RNQwRG1MNPNMNQy0JSUppKkY00UUUDEooopAFFFFIYUlLRTASloopAFFFFMAooooAKKKKQBRRRTAKKWkoAKWiigAooooAKKKKAFooooAKKKKAIaKKKQBRRRTAKKKKQBRRRQAUUUUAFFFFAgooopjFooopAFFFLQAUUUUwCiiikAUUUUAFLRRTELRRRQAtLSUtMBacKaKcKYh4p4pgp4qkSx61KtRLUq1aIZ6V4TGNAtf+BfzroIPutWD4VGNAs/of51uwfdaokNFbV/+Qbd/wDXFv5V5G3QV65qv/IOuv8Ark38q8jbpVR2E9yFqiapGqNqGNEZpppxppqGWhtJSmkNSNCGkNLSUDEopaSkAUUUUhhRRRTAKKKKQgooopjCiiikIKKKKBhS0lFAC0UlFAC0UUUAFFFFABRRRQAtFFFMAooopAQ0UUUwCiiikAUUUUAFFFFMAooopAFFFFMAooooAWiiikAUtJRTAWiiigAooopAFFFFMBaKKKBC0UUUALSikpRTAUU4U0U4UxDxTxUYqQVSJY9alWolqVatEM9N8LjGgWf+6f51uwfdNYnhn/kA2X+5W3B901DHErapzYXX/XJv5V5C3SvYNRH+hXH/AFyb+VePv0qo7A9yJqiapWqJqGCI2pppzUw1DLEpKU0hpDEpKU0lSMKSiigAooooGFFFFABRRSUALRRRQAUUUUgCiiimAUUUUgFopKKYBS0lLSAKKKKACiiimAtFFFABRRRSAhopaKYCUUUUAFFFFABRRRQAUUUUgCiiimAUtJS0AFFFFABRRRQAtFIKWgAooopAFFFFMBaKKKBC0UUUwFpaSloAUU4U2nCmIeKcKaKetUiWPWpV6fhUS1MvT8KtEM9P8N8aFZf9c62oPumsbw8MaJY/9chWzD91qiQ4kN//AMelwP8Apm38q8fevYrwZt5h/wBM2/lXj0g5P1NVHYHuQNUTVK1RNQCI2php5ppqGWhtJS0hpDENJSmkpDEooopAFFFFIYUUUUwEoopaACiiigAooooAKKKKQBRRRQAUUUUwClpKWgAooopAFFFFMApaSloAKKKKQEVJRRTAKKKKACiiigAooooAKKKKACiiloAKKKKQBRRRTAKKKWgAooooAKKKKAClpKWkAUUUUxC0UUUwFFKKQUtACinCminCmIeKetMFPFUiWSLUq9KiWpV6GrRDPUtBGNFsf+uQrXg+61ZWiDGkWX/XFa1ofumoY4kdzzDL/uN/KvH5vvN/vH+dewz/AOrk/wBw/wAq8en/ANY/+8f51URPcrtUTVK9RNQxojNMNPamGpZY00lLSVIxKSlNJSGJRRRSAKKKKQwpKWimAUUUUgCiiimAUUUUAFFFFIAooopgFFFFIAooopgLRRRQAUUUUAFFFFAC0UUUAQ0tFFIBKKKKYBRRRQIWikooGLRRRQAUUUUgCiiigAooopgLRRRSEFFFFMYUUUUhBS0lLQAUUUtMApaSigBaUUlKKYDhSiminCmIeKeKYKetUiSRalHQ/SolqUfdP0q0Qz1bRxjSrMf9MV/lWpD901m6UMabaD/piv8AKtKH7pqGUhsv3H/3T/KvHrj/AFsn++3869hk+630P8q8fuf9bL/vt/OnEllV6iapWqJqbGiM0w09qYallDaQ0tJUlCGkpTSUhiUUtFIBKKKKQBRRRTGFFFFAgooooGFFFFIAooooAKKKKACiiigQUUUUxhS0UUgCiiigQUUUUDCilooAiopKKYBRRRQAUUUUAFFFFAC0lFFABS0lLQAUUUUAFLSUUgFopKWgAooopgFFFFIApaSlpgFLSUUCFooooAWlFJSimAopwpop4piHCnimCnrVIkkWpR0NRLUo6GrRDPWtN4sLUf8ATJf5VoRfdNULAYs7f/rkv8q0IvumoY0Nfofof5V49d8XE3/XRv517C3U/Q14/e8XU/8A10b+dOISKj1E1StUTU2CIzTDTzTDUspDaSlNJUlCUlLSUhiUUUUgCiiigAooooGFFFFABRRRQAUUUUAFFFFABRRRQAUUUUgCiiimAtFJS0gCiiigApaSimAtFJRSAiooopgFFFFABRRRQAUUUUAFFFFABS0lLQAUUUUAFFFFABRRRQAtFFFABRRRQAUtJRQAtFFFAhaKSlpgLSikpRQAopwpBSimSPFPWmCnrVoTJFqZelQrUy9vqKpEM9bsxi1g/wCua/yq9F901TtuIIh/sL/KrsXQ1DKQ0/eryDUP+Py4/wCurfzr189a8h1IYv7of9NW/nTiKRSeomqVqiamwRGaYae1MNSykNNIaU0hqShKSiikMSiiigAooopDCiikoAKWkpaACiiigAooooAKKKKACiiigAooooAKKKKACiiigApaSigBaKKKQBRRRTAiooooAKKKKQBRRRTAKKKKACiiigApaSloAKKKKQBRRRTAKKKKAFooooAKKKKACiiloASlpKWgQUtJS0AKKUUgpRTAUU6minCqEPFPWmCnrVIlki1OnUfUVAtTx/eX/eFUiGeuwf6uP/dH8quR9DVSIYVf90Vbj6GoZSEP3q8i1YY1K7H/AE2b+deuN1FeS6yMapef9dm/nTiKRnNUTVK1RNTYIjNMNPNMNSyhtIaU0hqShppKU0lIYUUUUgCiikoGLRRSUgCloooAKKSigBaKKKYBRRRQAUUUUAFFFFABRRRQAUUUUgCiilpgFFFFABRRRSAiooopgFFFFIAooopiClopKBhRRRQAUtJRSELRRRQMKKKKACiiimAtFJS0AFFFFIAooopiFopKWgApaSloAUUopKUUwFFOFNFOFMkeKeKYKeKtEskWrEHMiD/aH86rrVm25miH+2P51SJZ67H0H0FWo/umqyVZj+6ahjQ1uteTa2Matej/AKat/OvWW615Rr4xrF6P+mppxFIy2qJqleompsaI2php5phqWUNNNNONNNSUJSUtJSGFFFFIApKKKBhRRRQAUtJRSEFFFFAxaKSloAKKKKYBRRRQAUUUUgCiiimAUUUUgClpKKAFooopgFFFFICKiiimAUUUUgCiiimAUUUUAFFFLQAUUlFAC0UUUgCiiimAUUUUAFLSUtABRRRQAUUUUAFLSUtAgpaSlpgFOFNFOFACinCminCmSPFPWmLT1q0SSLVq05uYR/00X+dVVq5ZD/S4P+ui/wA6pEs9cXrViP7pqsOtWI+hqGUhG615V4iGNbvh/wBNTXqr9RXlniQY1y9/66f0pxFIx2qJqleompsERmmGnmmGpZSGGkpTSVJQlJS0lIYUUUlABRRRSGFFFFABRRRQAUUUUAFFFFIBaKSlpgFFFFABRRRQAUUUUAFFFFABRRRSAKWkopgLRRRSAiooopgFFFFIAooopgFFFFAC0lFFABS0UUAFFFFIAooopgFFFFABS0lLQAUUUlAC0UUUAFLSUtAgpaSlpgFOFNFOFACinCminCqEPFPWmCnr1qkSyVKu6cM3tt/11X+dUkq/pgzf2o/6bL/OqRDPWB941PH0NQD7x+tTx96hlIRuteW+JxjXr3/f/pXqT9a8u8U/8h69/wB8fypxFIxmqFqmeoWqmCI2php7VGahlDTSUppDUlCUlLSGkMKSiigAooopDCiiigAooooAKKKKACiiigApaKKACiiigAopKWgAooooAKKKKACiiigAooooAKKKKAI6KWikAlFFFMAoopaAEopaKQCUUtJTAKWkpaQBRRRQAUUUUwCiiigApaSlpAFFFFMAooooAKWkpaBBS0lLTAWlpBSigBRThTRThVCHrT1pi1ItUiGSJWhpQzqVp/12X+dZ61paOM6pZj/psv8AOqRDPVR941PH3qAfeP1q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RRQAUUUUwCiiikAUUUUwCiiigAooopAFFFFMAooooAKWkooAKWkooAWikpaQBRRRTAKKKKQDaKKKACiiimAUUUUALRSUUhC0lFFMYtFFFIAoopKAFopKKAFooooEFFFFMYUUUUhBRRRQAUUUUDCiiigQUUlLTGFFJS0AFFFJSELVe7+4v1qeobr/AFP40wGwHkVp24DjAPIGazLcZPt3NaqKZIQqDZEeSe7f/WpAM4LnYcZ4Lj+VQ3BBl46AAVPMQq4AxjsKrOdzZoAbS0lFAxaKKSgBaKSigApaSloAKKKKACiiigAooooAKKKKBBRRRQMKKKKBBRRRQAUUUUxhRRRSEFFFFMYUUUUAFLSUUgFopKKAFooopgNooooAKKKKACiiikAUUUUAFFFFABS0lFMAooooAKKKKACiiigApaSigBaKSikAtFJRQAtFJRQAtFFJQAUUUUwFopKKACiiigAqK5/1J+tS1HMMxN9KAIIWywz0HQVrwt8nBPSsaHqK1Yfu8k0hBL7g1XPU1YcZHPHtVc9TQAUUUUDCiiigAooooAKKKKAFopKKYC0UUUgCiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiimAUUUUAFFFFACUUlLQAUUlFIApaSimAtFFJQAtFFFIAooopgFFFFIAooooAKKKKYBRRRQAUUUUAFFFFABRRRSAKKKKYBRRRQAUUUUgCiiimAU1/uN9KdTJeIm+lAirCM4rUhB2cGs6EdMCtG2SRjgY/OkA/G8jNVT1OeuaturxnJAznsarSAhzu60ANooopjCiikoAWikpaACiiikAUUUUwClpKKQC0UUlAhaKSimMKWkooAKKKKAClpKKAFpKKKACiiigApaSloAKKKKQBRRRTAKKKKACiiigBtFFFABRRRQAUUUUALRRSUgCiiigApaSloAKKKKACiiimAUUUUgCiiigAooooAKKKKACiiigAooopgFFFFIAooopgJS0UUAFRzEiMkDPrUlNc4Rj7UCEtvLYcKh+pxXQadarKu5bZMDvvFcnHHuUsSQKuWkEjSpEJ2QP6GkB0t5DHAm+QJ/30KxL2dZ5QygAAY4qpe27wsQ0jNj1NLH9wfSgB9FFFMYUUUUAFFFFIAooopgFFFFABRRRSAKKKKBBRRRQMKKKKYBRRRQAUUUUAFFFFABRRRQAUtJRQAtFFFIAooooAKKKKYBRRRQA2iiigAooopAFFFFABRRRQAUUUUwCiiikAtFJRQAtFJRQAtFJRQIWiiigYUUUUAFFFFABRRRTAKKKKQgooopjCiiigAoopKQgpk5xE3qeKfSrHv+Yj5E5+p9KYES27O9vaoDvkIz+NXb/ZBfuIWAEIUA+uKu6ZF9mSTUZceY3yQA9z3aqF1ADfsp5ym6kBZ1K38xUmXlZFzn3rOQYUCtnTR5kcthIQHH7yHPf1FVL+0MTeYo/duNwOOnqKAKdFJRTAWiiikAUUUUDCiiimAUUUUgCiiimAUUUUgCiiigQUUUUDCiiigQUUUUxhRRRQAUUUUhBS0lFMYtFJS0gCiiigQUUUUDCiiigBtJRRTAKKKKBC0UlFIBaKSigYtFJRQIWikooAWiiimMKKKKQBRRSUCFpaSjNMYtJRRSELRSUUxi0UlFIBaKSimIWkopaBhRRRSEFJRT4yqnc6lvRB/EaAFSLKGSQ7Ix/F6/SlhuIJ5lTmOFehxkVFcK8p33T7EH3UHb2p0RhkgfzC6IB8ioO/qaYFyWCVJI3kmEkR/1ZXkYqS3Rpr9wy8+XgU7wuFvHm0qU/Mw8yAn+8O34iteCzNlrVuzcb07jvSAjn0eSWW3ETFJuqN021BcM1qC9yI5LeRtlwqNu8tv7wx0zWr4lvngEdsjBbm5GCwGNiVi3MUdjArxW3yqu2b59wmXvn3oAy721a1m25DRNzG46MKZbxedMsZJGQelaltJDHa8p9t05jwucPFTWu9Mt1ZtOglDspG6VskewoAyaKKWmAUUUUDCiiigAooooAKKKKACiiigAooooAKKKKQBRRRQIKKKKYwooooAKKKKQBRRRTAKWkooAWikpaQBRRRQAUUUUAR0UUUxBRRRQAUtJRQAtFJRQAtJSUUWAWjNJRQMWlpKKBC0UlJQA6jNNzRmiwDqKSiiwC0UlFFgFopKWiwBS0lFAC0UlLQAUUUUAFFFFABTrXpLMRnb8q02lgP8Aoco/uyc0AQ3Xzx7mzkdKuaXAbiwvlUZZYtw+gqpKMxMB6U/SrtrSUSY3IRtdR3BoAlhlawubC/jypVgSfpXbalcCSe0lUhtznBHoea5PVUt/7NAgfK53KCORWlZ3Qk0qykZsmMNnPsKQD9TSS61Nr0rujU7Rj0FaVx9hu7RFtnRnI5TvVHw9rdutp5F2wTJ3BiM1eiubO6vAtlFGVjBZ5guAfagDjrB2t9SaIEqhYqy9jTGADsB0yasQKsl5c3HRFYkVWznk9+aACilopgJS0UUAFFFJQAUUUUDCloooEFFFFABRRRQMKKKKBBRRRQAUUUUAFFFFABRRRQMKKWigQUUUUAFFFFABRRRQAUUUUAR0UUUAFFFFABRRRQAUlLRQAlFFFMAooooAKKKKACiikoAWiikoAWikooAWikpaAFopKKAFpaSigBaWkpaACiiloASloooASlhcQyFmTfG4w6/1ooxQA+byCP3DSEHqHXGKowqwdlU4cdPerlVrlGUiVOo60AOe4kdTHKenb0q1YSY0q4BJyuQPxqkCl0h/hlH/AI9T4HK2FwvqRmkBbsYvOhiAj8wqfunuK2ftgsbC7MaCIP8ALGoPeufsXZEJDlU/ib0FSz3DXMi4GIo+EB/maQDy3lWiwD77fNIf6VDRRTAKKWimAlFLRQAlFLRQAlFLRQAlFLRQAlFLRQAlFLRikAlLRRQAlLRRigAopaKAEooooAKKKMUAFFLSUAFFFLQAlFLRQAlFLSUAFFLRQAykxS0YoASilxRimAlGKdijFADcUU7FJigBtFOxRigBuKMU7FGKAG4oxTsUYoAZRin4oxQAzFFOxRigBlFOxRigBtFLijFACUtGKKAEpaSimA4UuaZS5oEPpaZmlBoAdS00GlzQAtLSUtACUEZpaKAM+RfKmIU4I5FWU5spSOrOOKWeEPludwFFou6Nzn5U+epYxWUYSBeFHLe5qQAAYFJEoKBzkuSSafimgExRS4oxTEJiilxRSASilxRigBKKWjFAxMUYpcUYoASilooATFFLRQAlFLRQAlFLijFACUUuKKACkpcUUAJRS0UAJiloooASilooASilooASilooASilooASilooAbRRRQAUUUUAFFLRQAlFFLQAlGKWigBMUYpcUUAJijFLRimITFGKWlxQA3FGKdijFADMUYp+KMUAR4oxT8UYoAjxSEVLik20ARYoxUm2k20AR4op+2kK0wG5ozRg0hBoAcGp26osUZoETA07NQhqUNQBNS1GGpwNAxwqK0+SC8X6D9amFRQnbJcof4gDUsESKMAD2paWimAlFLijFACYoxS0UAJRS0YoASjFLiigBKKWigBKKWjFACUUuKMUAJRS0UAJRS0UAJRS0UAFJS0UDEopaKQCUUtFACUUtFACYopaSgAooooAKKMUtACUUuKKAGUUUUxBRRRQAUUtFACUUtFABRRRQAUUUtACUYpaXFADaXFLRimAmKMU6igBMUYpaMUAJijFLRQAmKMUtLQA3bSbafRigBhWk2VJiigRFspDHU2KMUAVzHSGOrOKTApgVTHSFSKt7RSbRQBV5FOD4qcopphiU96ABWBpkfN3L7LSFGX7pzRbt+/l3DBKikxosilxSAil4oAMUUtJQISilpcUAJRS4oxQMSkxTsUYoAbRTsUYoAbijFOooAbRinUYoAbiilooATFFLiikAmKKWigBKKXFFACUUtFACUlLRQAlFLRQAlFLRQAlFLSUAFFFFABRS0UgGUUUtMBKKWigBKWiigAooooAKKKKAFopKXNMApaTNGaAFoozRmgBaKTNGaAFopM0ZoAWikzRmgBaKTNGaLgOopuaM0XAWjNNzRmi4DqOPWm5pM0XAcaSkzSZpXAXik/GiilcBDSUtFIY2lxS4ooASloooAX8aUfWkopgOH1paZS07isPozTKXNADs0uaZmjNFwH5ozTc0ZoAdRTc0ZoAdRTc0ZoAdmkpM0ZoAdRTc0ZoAdRTc0ZoAdSUmaM0ALRSZozQAUUZozQAUUUUAFFFFABRRRQAUUUUAFFFFADaKKKACiiigAooooGFFFFAgooooAKKKKACiiigAooooAWkoooAKKKKACiiigAooooAKKKKAEooopAFFFFABSUUUDCloooAKKKKACiiigQUUUUAFLRRQMSloooAKKKKBBRRRQAUUUUAFLRRTASloopAJmiiigAooooGGaWiigAooooAKKKKACjNFFABRRRQAUUUUCFooopgJRRRQAUUUUgP/9k=';
+const STORAGE_KEY = 'pf-' + CHAR_ID;
+const DEFAULT_THEME='stormglass';
+const DATA_VERSION = 1;
+const ABILS=['STR','DEX','CON','INT','WIS','CHA'];
+const AB_FULL={STR:'Strength',DEX:'Dexterity',CON:'Constitution',INT:'Intelligence',WIS:'Wisdom',CHA:'Charisma'};
+const SIZE_MOD={T:2,S:1,M:0,L:-1,H:-2};
+const AB_TIPS={
+  STR:"Strength. Feeds your rapier damage and melee. Modest, but Spell Combat means you're in the fray regardless.",
+  DEX:"Dexterity. AC, Reflex saves, Initiative, and your light-armor finesse. Your second-best stat.",
+  CON:"Constitution. Hit points and Fortitude saves. Toughness padded these already.",
+  INT:"Intelligence. YOUR PRIMARY STAT. Spell save DCs, bonus spells, spells known/prepared, your deep skill list, and Spellcraft. Everything magus flows from here.",
+  WIS:"Wisdom. Will saves and Perception. Average, but your elven immunities shore up the mental side.",
+  CHA:"Charisma. Social skills. Your lowest stat — let the others talk."
+};
+const SLOTS=['Armor','Shield','Head','Headband','Eyes','Neck','Shoulders','Chest','Body','Belt','Wrists','Hands','Ring 1','Ring 2','Feet'];
+const FORMULA_DESCS={
+  'Detect Magic':'Detects magical auras over 3 rounds. At-will cantrip.',
+  'Light':'Object glows like a torch (20 ft). At-will cantrip.',
+  'Prestidigitation':'Minor magic tricks — clean, chill, flavor, mend. At-will cantrip.',
+  'Read Magic':'Read scrolls and magical writing. At-will cantrip.',
+  'Shocking Grasp':'Touch, 1d6/level electricity (max 5d6). +3 to hit vs metal armor. Deliver through your blade with Spellstrike — on a crit, the lightning doubles too.',
+  'Vanish':'Become invisible for 1 round/level (max 5). Great setup for a Spellstrike opener.',
+  'True Strike':'+20 insight to your next attack, ignores concealment. Spellstrike a near-guaranteed hit.',
+  'Color Spray':'15-ft cone: unconscious / blind / stunned by HD. Will DC 15. Crowd-stopper at low levels.',
+  'Mirror Image':'1d4+1 illusory duplicates (4 min) that soak hits meant for you. NEW at 4 — your survival button.',
+  'Glitterdust':'30-ft burst: blinds enemies and outlines invisible ones. Will DC 15, no spell resistance. NEW at 4 — answers invisibility and shuts down casters.'
+};
+const SKILLS=[
+  ['Acrobatics','DEX'],['Appraise','INT'],['Bluff','CHA'],['Climb','STR'],['Craft','INT'],
+  ['Diplomacy','CHA'],['Disable Device','DEX'],['Disguise','CHA'],['Escape Artist','DEX'],
+  ['Fly','DEX'],['Handle Animal','CHA'],['Heal','WIS'],['Intimidate','CHA'],
+  ['Kn. Arcana','INT'],['Kn. Dungeoneering','INT'],['Kn. Engineering','INT'],
+  ['Kn. Geography','INT'],['Kn. History','INT'],['Kn. Local','INT'],['Kn. Nature','INT'],
+  ['Kn. Nobility','INT'],['Kn. Planes','INT'],['Kn. Religion','INT'],['Linguistics','INT'],
+  ['Perception','WIS'],['Perform','CHA'],['Profession','WIS'],['Ride','DEX'],
+  ['Sense Motive','WIS'],['Sleight of Hand','DEX'],['Spellcraft','INT'],['Stealth','DEX'],
+  ['Survival','WIS'],['Swim','STR'],['Use Magic Device','CHA']
+];
+const ACP_SKILLS=['Acrobatics','Climb','Escape Artist','Fly','Ride','Sleight of Hand','Stealth','Swim'];
+const SKILL_ABILS=Object.fromEntries(SKILLS.map(([n,a])=>['sk-'+n.replace(/[^a-zA-Z]/g,''),a]));
+
+let diceN=1;
+let S={
+  name:'Wren Holloway',race:'Half-Elf',cls:'Bladebound Magus',level:4,deity:'',speed:30,size:'M',
+  languages:'Common, Elven',senses:'Low-Light Vision',
+  abilities:{STR:12,DEX:16,CON:14,INT:18,WIS:11,CHA:10},
+  abilTemp:{STR:0,DEX:0,CON:0,INT:0,WIS:0,CHA:0},
+  hp:34,maxHp:34,bab:3,wield:'main',
+  saves:{fort:{base:4,magic:1,misc:0,temp:0},ref:{base:1,magic:1,misc:0,temp:0},will:{base:4,magic:1,misc:0,temp:0}},
+  initMisc:2,
+  ac:{armor:4,shield:0,natural:0,deflect:0,dodge:0,misc:0,maxDex:4,spellFail:0},
+  sr:0,dr:'\u2014',xp:0,xpN:0,gp:86,
+  hasComp:true,hasPow:true,
+  gear:{weapons:[
+    {id:'w1',name:'Silvermoth (+1 Rapier)',damage:'1d6+2',crit:'18-20/\u00d72',damageType:'P',weight:2,range:'',ammo:null,
+     properties:'+1 sentient black blade. Finesse. STR + enhancement in damage. Wide 18-20 crit threat. Spellstrike delivers touch spells through it.'},
+    {id:'w2',name:'Cold Iron Dagger',damage:'1d4+1',crit:'19-20/\u00d72',damageType:'P/S',weight:1,range:'10 ft.',ammo:null,
+     properties:'Cold iron — bypasses some fey/demon DR. Throwable 10 ft.'}
+  ],equip:[
+    {id:'e1',name:'Chain Shirt',bonus:4,armorType:'Light',maxDex:4,acp:-2,spellFail:0,weight:25,slotType:'Armor',
+     properties:'+4 armor, Max DEX +4, ACP -2. No arcane spell failure on magus spells.'},
+    {id:'e2',name:'Cloak of Resistance +1',bonus:0,armorType:'',maxDex:99,acp:0,spellFail:0,weight:1,slotType:'Shoulders',
+     properties:'Resistance +1 to all saves. Already in your save totals.'}
+  ],other:[
+    {id:'o1',name:'Wand of Shield (50)',weight:0,properties:'Cast Shield: +4 shield bonus to AC (to AC 21), blocks magic missile. 50 charges, no prep needed.'},
+    {id:'o2',name:'Pearl of Power (1st)',weight:0,properties:'Recall one expended 1st-level spell, once per day.'},
+    {id:'o3',name:'Spell Component Pouch',weight:2,properties:'Material components.'},
+    {id:'o4',name:'Spellbook (+ blank backup)',weight:3,properties:'Your prepared-spell source. Guard it.'},
+    {id:'o5',name:"Father's Coded Maps",weight:0,properties:'Annotated orrery diagrams. A Confluence thread.'},
+    {id:'o6',name:'Broken Signet Ring',weight:0,properties:'The Holloway signet, snapped. Personal.'},
+    {id:'o7',name:'Sealed Letter',weight:0,properties:'Unopened. For later.'},
+    {id:'o8',name:'Ink, Inkpen & Journal',weight:1,properties:'For scribing into your spellbook.'},
+    {id:'o9',name:'Backpack',weight:2,properties:''},
+    {id:'o10',name:'Rope, 50 ft.',weight:10,properties:''},
+    {id:'o11',name:'Rations (5 days)',weight:5,properties:''},
+    {id:'o12',name:'Waterskin',weight:4,properties:''},
+    {id:'o13',name:'Flint & Steel',weight:0,properties:''}
+  ]},
+  slots:{Armor:'e1',Shoulders:'e2'},
+  equippedWeapons:{main:'w1',off:null},
+  skills:{
+    'sk-Spellcraft':{ranks:4,misc:3,cs:true},
+    'sk-KnArcana':{ranks:4,misc:0,cs:true},
+    'sk-KnDungeoneering':{ranks:4,misc:0,cs:true},
+    'sk-Perception':{ranks:4,misc:4,cs:false},
+    'sk-Intimidate':{ranks:4,misc:0,cs:true},
+    'sk-Climb':{ranks:3,misc:0,cs:true},
+    'sk-Swim':{ranks:2,misc:0,cs:true},
+    'sk-UseMagicDevice':{ranks:2,misc:0,cs:true},
+    'sk-SenseMotive':{ranks:1,misc:2,cs:false}
+  },
+  feats:{always:[
+    {name:'Weapon Focus (Rapier)',desc:'+1 to attack rolls with your rapier. Already in Silvermoth\'s attack.'},
+    {name:'Toughness',desc:'+4 HP (1/level). Included in your HP total.'},
+    {name:'Skill Focus: Spellcraft (Half-Elf)',desc:'+3 to Spellcraft. Included.'},
+    {name:'Focused Mind (Trait)',desc:'+2 to concentration checks — critical for casting in melee with Spell Combat.'},
+    {name:'Reactionary (Trait)',desc:'+2 Initiative. Already included.'},
+    {name:'Keen Senses (Half-Elf)',desc:'+2 racial Perception.'},
+    {name:'Elven Immunities',desc:'Immune to magic sleep; +2 racial vs enchantment.'},
+    {name:'Low-Light Vision',desc:'See twice as far as humans in dim light.'}
+  ],combat:[
+    {name:'Spell Combat',desc:'Full-round action: make all your melee attacks AND cast a magus spell, at -2 to all attack rolls. Requires one hand free.'},
+    {name:'Spellstrike',desc:'Deliver a touch spell through your weapon as part of a melee attack. If the weapon crits, the spell damage is doubled too.'},
+    {name:'Spell Recall (NEW at 4)',desc:'Swift action: spend arcane pool points equal to a spent spell\'s level to recall it unspent (1 pt for a 1st, 2 for a 2nd).'},
+    {name:'Arcane Pool Enhancement',desc:'Swift action, 1 point: Silvermoth gains +1 enhancement (stacks to +2) for 1 minute. Can add weapon properties instead.'}
+  ],special:[
+    {name:'Bladebound — Black Blade',desc:'Silvermoth is your bonded sentient weapon. It has its own arcane pool point and the Silvermoth Strike ability (see its tab).'},
+    {name:'Arcane Pool',desc:'7 points total (6 personal + 1 from Silvermoth). Fuels enhancement, Spell Recall, and Silvermoth Strike. Refreshes each day.'},
+    {name:'Magus Casting',desc:'Prepared arcane caster from your spellbook. Cantrips are at-will once prepared.'}
+  ],companion:[
+    {name:'Sentient Weapon',desc:'Silvermoth is not a separate creature — it shares your space and defenses. The fields here track its own HP, hardness, and ego if it is ever targeted directly.'},
+    {name:'Empathic Bond',desc:'Communicates with you through emotion and impulse (gains speech at level 5). It cannot be permanently separated from you, and reacts to planar energy — a Confluence early-warning.'},
+    {name:'Silvermoth Strike',desc:'Spend 1 of the blade\'s pool points: +3 bonus damage on its hits for 1 minute.'}
+  ]},
+  atkCards:[
+    {name:'SPELL COMBAT + SPELLSTRIKE \u2014 The Combo',body:'<strong>Full-round action.</strong> Make ALL your melee attacks at <strong>-2</strong>, and cast one magus spell the same round (one hand must be free).\n\nWith <strong>Spellstrike</strong>, deliver a touch spell (like Shocking Grasp) <em>through</em> Silvermoth as one of those attacks vs normal AC.\n\n<strong>If Silvermoth crits (18-20!), the spell damage doubles too.</strong> This is your whole engine: hit, and dump a spell into the wound.'},
+    {name:'SILVERMOTH \u2014 Rapier',body:'<strong>To Hit:</strong> d20 + 3 (BAB) + 1 (STR) + 1 (Weapon Focus) + 1 (enhancement)\n= <strong>d20 + 6</strong>\n<strong>Damage:</strong> 1d6+2 \u00b7 <strong>18-20/\u00d72</strong> \u00b7 Piercing\n\nWide crit range pairs beautifully with Spellstrike. Spend a pool point for +1 enhancement (to +7 / 1d6+3) when it matters.'},
+    {name:'SHOCKING GRASP \u2014 Through the Blade',body:'<strong>Damage:</strong> up to 5d6 electricity (your level), delivered via Spellstrike on a melee hit.\n\n<strong>+3 to hit if the target wears metal armor.</strong>\n\nOn a Silvermoth crit, this becomes <strong>up to 10d6</strong>. The signature magus burst.'},
+    {name:'MIRROR IMAGE \u2014 Survival (NEW)',body:'<strong>1d4+1 illusory duplicates</strong> of you (4 minutes). Each attack against you has to guess which is real and likely hits an image instead.\n\nCast it before you wade in with Spell Combat. Bought you a lot of HP for one slot.'},
+    {name:'GLITTERDUST \u2014 Control (NEW)',body:'<strong>30-ft burst:</strong> creatures are <strong>blinded</strong> (Will DC 15 each round to end) and any invisible creatures are <strong>outlined</strong>. <strong>No spell resistance.</strong>\n\nBlind a cluster of enemies or reveal a hidden one. Your answer to invisibility.'},
+    {name:'ARCANE POOL ENHANCEMENT \u2014 Buff Blade',body:'<strong>Swift action, 1 pool point:</strong> Silvermoth gains +1 enhancement (stacks to +2) for 1 minute, or take a weapon property (flaming, keen, etc.) instead.\n\nFree to fire off at the start of a fight. Track your pool on the Powers tab.'},
+    {name:'COLD IRON DAGGER \u2014 Backup',body:'<strong>To Hit:</strong> d20 + 3 (BAB) + 1 (STR) = <strong>d20 + 4</strong>\n<strong>Damage:</strong> 1d4+1 \u00b7 19-20/\u00d72 \u00b7 P/S\n\nCold iron bypasses some fey and demon damage reduction. Throw it 10 ft if you need a ranged option.'}
+  ],
+  compAtkCards:[
+    {name:'SILVERMOTH STRIKE',body:'<strong>Spend 1 of the blade\'s pool points:</strong> +3 bonus damage on Silvermoth\'s hits for 1 minute.\n\nStacks with your own Arcane Pool Enhancement. When you want a turn to really bite, fire both.'},
+    {name:'SENTIENCE \u2014 What Silvermoth Is',body:'<strong>HP 15 \u00b7 Hardness 10 \u00b7 Ego 5 \u00b7 INT 11.</strong>\n\nUnbreakable and bonded \u2014 it cannot be permanently taken from you. Communicates by emotion (speech at level 5). It <strong>reacts to planar energy</strong>, an early warning when the Confluence bleeds through.'}
+  ],
+  comp:{name:'Silvermoth',type:'Black Blade \u2014 sentient +1 rapier (Hardness 10 \u00b7 Ego 5)',hp:15,maxHp:15,ac:10,speed:'\u2014',
+    abilities:{STR:10,DEX:10,CON:10,INT:11,WIS:7,CHA:7},fort:0,ref:0,will:0},
+  resources:[
+    {name:'Arcane Pool \u2014 7 (6 personal + 1 blade)',max:7,used:0},
+    {name:'Pearl of Power (1st) \u2014 1/day',max:1,used:0}
+  ],
+  spellLevels:[
+    {level:0,slots:4,used:0,spells:'Detect Magic, Light, Prestidigitation, Read Magic'},
+    {level:1,slots:4,used:0,spells:'Shocking Grasp, Vanish, True Strike, Color Spray'},
+    {level:2,slots:2,used:0,spells:'Mirror Image, Glitterdust'}
+  ],
+  preparedExtracts:[],preparedMutagen:null,activeMutagen:null,
+  rdmg:0,bgImage:RUNDT_IMG,diceHist:[],notes:'',enlarged:false,dataVersion:DATA_VERSION
+};
+
+function mod(s){return Math.floor((s-10)/2)}
+function ms(v){return v>=0?'+'+v:''+v}
+function sm(){const es=S.enlarged?'L':S.size;return SIZE_MOD[es]||0}
+function abm(a){
+  let adj=0;
+  if(S.enlarged){if(a==='STR')adj=2;if(a==='DEX')adj=-2;}
+  return mod((S.abilities[a]||10)+(S.abilTemp[a]||0)+adj);
+}
+function toggleEnlarge(){
+  S.enlarged=!S.enlarged;
+  renderApp();
+}
+
+function exportToGM(){
+  save(); // ensure latest UI values are captured
+  syncArmorAC();
+  recalc();
+  const dx=abm('DEX'), st=abm('STR'), s=sm();
+  const edx=Math.min(dx,S.ac.maxDex);
+  const dodge=S.ac.dodge||0;
+  let wornAC=0;
+  for(const slot of SLOTS){
+    if(slot==='Armor'||slot==='Shield')continue;
+    const itemId=S.slots[slot];
+    if(itemId){const item=S.gear.equip.find(x=>x.id===itemId);if(item&&item.bonus)wornAC+=item.bonus;}
+  }
+  const exp={
+    exportVersion:1,
+    exportDate:new Date().toISOString(),
+    identity:{name:S.name,race:S.race,cls:S.cls,level:S.level,deity:S.deity,
+      speed:S.speed,size:S.size,languages:S.languages,senses:S.senses},
+    abilities:{},
+    combat:{
+      hp:S.hp, maxHp:S.maxHp, bab:S.bab, sr:S.sr, dr:S.dr,
+      initiative:dx+(S.initMisc||0), initMisc:S.initMisc||0,
+      meleeAtk:S.bab+st+s, rangedAtk:S.bab+dx+s,
+      cmb:S.bab+st-s, cmd:10+S.bab+st+dx+dodge-s,
+      wield:S.wield
+    },
+    ac:{
+      total:10+S.ac.armor+S.ac.shield+edx+s+S.ac.natural+S.ac.deflect+dodge+S.ac.misc+wornAC,
+      touch:10+edx+s+S.ac.deflect+dodge+S.ac.misc+wornAC,
+      flatFooted:10+S.ac.armor+S.ac.shield+s+S.ac.natural+S.ac.deflect+S.ac.misc+wornAC,
+      components:{armor:S.ac.armor,shield:S.ac.shield,dex:edx,size:s,
+        natural:S.ac.natural,deflect:S.ac.deflect,dodge:dodge,misc:S.ac.misc,worn:wornAC},
+      maxDex:S.ac.maxDex, spellFail:S.ac.spellFail
+    },
+    saves:{
+      fort:{total:S.saves.fort.base+abm('CON')+S.saves.fort.magic+S.saves.fort.misc+S.saves.fort.temp,...S.saves.fort},
+      ref:{total:S.saves.ref.base+abm('DEX')+S.saves.ref.magic+S.saves.ref.misc+S.saves.ref.temp,...S.saves.ref},
+      will:{total:S.saves.will.base+abm('WIS')+S.saves.will.magic+S.saves.will.misc+S.saves.will.temp,...S.saves.will}
+    },
+    skills:{},
+    gear:{weapons:S.gear.weapons,equip:S.gear.equip,other:S.gear.other},
+    slots:{...S.slots},
+    equippedWeapons:{...S.equippedWeapons},
+    feats:S.feats,
+    atkCards:S.atkCards,
+    resources:S.resources,
+    spellLevels:S.spellLevels,
+    xp:S.xp, xpN:S.xpN, gp:S.gp, rdmg:S.rdmg
+  };
+  // Abilities with computed mods
+  for(const a of ABILS){
+    const tmp=S.abilTemp[a]||0;
+    const eff=S.abilities[a]+tmp;
+    exp.abilities[a]={base:S.abilities[a],temp:tmp,effective:eff,mod:Math.floor((eff-10)/2)};
+  }
+  // Skills with computed totals
+  for(const[key,sk] of Object.entries(S.skills)){
+    const cleanName=key.replace('sk-','');
+    const ab=SKILL_ABILS[key]||'INT';
+    const csBonus=(sk.cs&&sk.ranks>0)?3:0;
+    const total=sk.ranks+abm(ab)+csBonus+(sk.misc||0)+s;
+    exp.skills[cleanName]={ranks:sk.ranks,ability:ab,abilMod:abm(ab),classSkill:sk.cs,
+      csBonus:csBonus,misc:sk.misc||0,total:total};
+  }
+  // Companion
+  if(S.hasComp){
+    exp.companion={...S.comp};
+    exp.compAtkCards=S.compAtkCards||[];
+  }
+  const filename=(S.name||'character').replace(/\s+/g,'_')+'_export.json';
+  const jsonStr=JSON.stringify(exp,null,2);
+  const blob=new Blob([jsonStr],{type:'application/json'});
+  const file=new File([blob],filename,{type:'application/json'});
+  // Use native share sheet on mobile, download on desktop
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    navigator.share({title:S.name+' — GM Export',files:[file]}).catch(()=>{});
+  } else {
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download=filename; a.click();
+    URL.revokeObjectURL(url);
+  }
+}
+
+function backupData(){
+  save();
+  const jsonStr=JSON.stringify(S,null,2);
+  const filename=(S.name||'character').replace(/\s+/g,'_')+'_backup.json';
+  const blob=new Blob([jsonStr],{type:'application/json'});
+  const file=new File([blob],filename,{type:'application/json'});
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    navigator.share({title:S.name+' — Backup',files:[file]}).catch(()=>{});
+  } else {
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download=filename; a.click();
+    URL.revokeObjectURL(url);
+  }
+}
+
+function restoreData(){
+  showMod(`<div class="modal-title">Restore Backup</div>
+    <div style="color:var(--text2);margin:12px 0">Select a backup JSON file. This will <strong style="color:var(--red)">replace all current data</strong> and reload.</div>
+    <div class="modal-field"><input type="file" id="m-restore" accept=".json" style="color:var(--text)"></div>
+    <div class="modal-actions"><button class="modal-btn secondary" onclick="closeMod()">Cancel</button>
+    <button class="modal-btn primary" onclick="doRestore()">Restore</button></div>`);
+}
+function doRestore(){
+  const fileInput=$('m-restore');
+  if(!fileInput||!fileInput.files.length) return;
+  const reader=new FileReader();
+  reader.onload=function(e){
+    try{
+      const d=JSON.parse(e.target.result);
+      if(!d.name && !d.cls){alert('This does not look like a valid backup file.');return;}
+      localStorage.setItem(STORAGE_KEY,JSON.stringify(d));
+      location.reload();
+    }catch(err){alert('Could not read backup file: '+err.message);}
+  };
+  reader.readAsText(fileInput.files[0]);
+}
+
+function save(){
+  S.xp=+$('dv-xp')?.value||0; S.xpN=+$('dv-xpn')?.value||0;
+  S.bab=+$('dv-bab')?.value||0; S.sr=+$('dv-sr')?.value||0;
+  S.dr=$('dv-dr')?.value||'—'; S.gp=+$('dv-gp')?.value||0;
+  S.ac.spellFail=+$('ac-sf')?.value||0; S.ac.maxDex=+$('ac-maxdex')?.value||99;
+  S.ac.armor=+$('ac-armor')?.value||0; S.ac.shield=+$('ac-shield')?.value||0;
+  S.ac.natural=+$('ac-nat')?.value||0; S.ac.deflect=+$('ac-defl')?.value||0;
+  S.ac.dodge=+$('ac-dodge')?.value||0; S.ac.misc=+$('ac-misc')?.value||0; S.rdmg=+$('dv-rdmg')?.value||0;
+  if($('notes-text')) S.notes=$('notes-text').value||'';
+  if(S.hasComp){
+    S.comp.name=$('comp-name')?.value||''; S.comp.type=$('comp-type')?.value||'';
+    S.comp.ac=+$('comp-ac')?.value||10; S.comp.speed=$('comp-spd')?.value||'30 ft.';
+    S.comp.fort=+$('comp-fort')?.value||0; S.comp.ref=+$('comp-ref')?.value||0;
+    S.comp.will=+$('comp-will')?.value||0;
+  }
+  S.dataVersion=DATA_VERSION;
+  localStorage.setItem(STORAGE_KEY,JSON.stringify(S));
+}
+
+function loadState(){
+  const r=localStorage.getItem(STORAGE_KEY);
+  if(!r) return false;
+  try{
+    const d=JSON.parse(r);
+    if(d.dataVersion===DATA_VERSION){
+      // Same version — load everything from storage
+      S={...S,...d};
+      S.abilities={STR:10,DEX:10,CON:10,INT:10,WIS:10,CHA:10,...(d.abilities||{})};
+      S.abilTemp={STR:0,DEX:0,CON:0,INT:0,WIS:0,CHA:0,...(d.abilTemp||{})};
+      S.saves={fort:{base:0,magic:0,misc:0,temp:0,...(d.saves?.fort||{})},
+        ref:{base:0,magic:0,misc:0,temp:0,...(d.saves?.ref||{})},
+        will:{base:0,magic:0,misc:0,temp:0,...(d.saves?.will||{})}};
+      S.ac={armor:0,shield:0,natural:0,deflect:0,dodge:0,misc:0,maxDex:99,spellFail:0,...(d.ac||{})};
+      S.gear={weapons:[],equip:[],other:[],...(d.gear||{})};
+      S.slots=d.slots||{};
+      S.equippedWeapons=d.equippedWeapons||{main:null,off:null};
+      S.feats={always:[],combat:[],special:[],companion:[],...(d.feats||{})};
+      S.comp={...S.comp,...(d.comp||{})};
+      S.skills=d.skills||{};S.resources=d.resources||[];S.spellLevels=d.spellLevels||[];S.preparedExtracts=d.preparedExtracts||[];S.preparedMutagen=d.preparedMutagen||null;S.activeMutagen=d.activeMutagen||null;
+      S.atkCards=d.atkCards||[];S.compAtkCards=d.compAtkCards||[];S.diceHist=d.diceHist||[];
+      S.notes=d.notes||'';
+    } else {
+      // Version mismatch — keep session data, refresh build data from defaults
+      S.hp=d.hp!=null?d.hp:S.hp;
+      S.xp=d.xp||S.xp;S.xpN=d.xpN||S.xpN;S.gp=d.gp!=null?d.gp:S.gp;
+      S.notes=d.notes||'';S.diceHist=d.diceHist||[];
+      S.abilTemp=d.abilTemp||S.abilTemp;
+      S.enlarged=d.enlarged||false;
+      S.comp.hp=d.comp?.hp!=null?d.comp.hp:S.comp.hp;
+      // Preserve resource usage (e.g. Hero Points spent)
+      if(d.resources){d.resources.forEach((dr,i)=>{if(S.resources[i])S.resources[i].used=dr.used||0})}
+    }
+    return true;
+  }catch(e){return false}
+}
+
+// Sync AC fields from equipped armor/shield slots
+function syncArmorAC(){
+  const armorItem=S.slots['Armor']?S.gear.equip.find(x=>x.id===S.slots['Armor']):null;
+  const shieldItem=S.slots['Shield']?S.gear.equip.find(x=>x.id===S.slots['Shield']):null;
+  S.ac.armor=armorItem?.bonus||0; $('ac-armor').value=S.ac.armor;
+  S.ac.shield=shieldItem?.bonus||0; $('ac-shield').value=S.ac.shield;
+  S.ac.maxDex=armorItem?.maxDex!=null?armorItem.maxDex:99; $('ac-maxdex').value=S.ac.maxDex;
+  S.ac.spellFail=(armorItem?.spellFail||0)+(shieldItem?.spellFail||0); $('ac-sf').value=S.ac.spellFail;
+}
+
+// RECALC
+function recalc(){
+  const enl=S.enlarged;
+  const ec=enl?'color:var(--blue)':'';
+  const s=sm(), dx=abm('DEX'), st=abm('STR'), wd=abm('WIS');
+  const edx=Math.min(dx,S.ac.maxDex);
+
+  // Initiative (DEX-based, affected by enlarge)
+  const initV=dx+(S.initMisc||0);
+  $('dv-init').textContent=ms(initV);
+  $('dv-init').style.cssText=ec;
+
+  const bab=S.bab;
+
+  // Melee attack (STR + size, both change but cancel out)
+  const matkV=bab+st+s;
+  $('dv-matk').textContent=ms(matkV);
+  // Net zero change on melee but still technically affected
+  $('dv-matk').style.cssText=ec;
+
+  // Ranged attack (DEX + size, both penalized)
+  const ratkV=bab+dx+s;
+  $('dv-ratk').textContent=ms(ratkV);
+  $('dv-ratk').style.cssText=ec;
+
+  // CMB (STR - size, both benefit)
+  const cmbV=bab+st-s;
+  $('dv-cmb').textContent=ms(cmbV);
+  $('dv-cmb').style.cssText=ec;
+
+  // Damage bonuses based on wield mode
+  let mainDmg=st, ohDmg=Math.floor(st/2);
+  if(S.wield==='twohanded') mainDmg=Math.floor(st*1.5);
+  else if(S.wield==='dualwield') ohDmg=Math.floor(st*0.5);
+  $('dv-mdmg').textContent=ms(mainDmg);
+  $('dv-mdmg').style.cssText=ec;
+  $('dv-ohdmg').textContent=S.wield==='dualwield'?ms(ohDmg):'—';
+  if(S.wield==='dualwield')$('dv-ohdmg').style.cssText=ec;
+
+  // AC - sum bonuses from all worn items (non-armor, non-shield)
+  let wornAC=0;
+  for(const slot of SLOTS){
+    if(slot==='Armor'||slot==='Shield')continue;
+    const itemId=S.slots[slot];
+    if(itemId){const item=S.gear.equip.find(x=>x.id===itemId);if(item&&item.bonus)wornAC+=item.bonus;}
+  }
+  const dodge=S.ac.dodge||0;
+  const acT=10+S.ac.armor+S.ac.shield+edx+s+S.ac.natural+S.ac.deflect+dodge+S.ac.misc+wornAC;
+  $('dv-ac').textContent=acT;
+  $('dv-ac').style.cssText=enl?'color:var(--blue);font-size:1.3rem':'font-size:1.3rem';
+
+  const tacV=10+edx+s+S.ac.deflect+dodge+S.ac.misc+wornAC;
+  $('dv-tac').textContent=tacV;
+  $('dv-tac').style.cssText=ec;
+
+  const ffacV=10+S.ac.armor+S.ac.shield+s+S.ac.natural+S.ac.deflect+S.ac.misc+wornAC;
+  $('dv-ffac').textContent=ffacV;
+  $('dv-ffac').style.cssText=ec;
+
+  const cmdV=10+bab+st+dx+dodge-s;
+  $('dv-cmd').textContent=cmdV;
+  $('dv-cmd').style.cssText=ec;
+
+  const wornEl=$('dv-worn-ac');if(wornEl)wornEl.textContent=wornAC?'+'+wornAC:'0';
+
+  // Saves — highlight Reflex (DEX-based) when enlarged
+  const smap={fort:'CON',ref:'DEX',will:'WIS'};
+  const stips={fort:"Your toughness save. Resists poison, disease, and physical effects. Based on CON.",
+    ref:"Your dodge save. Avoids explosions, traps, and area effects. Based on DEX.",
+    will:"Your mental save. Resists mind control, fear, and illusions. Based on WIS."};
+  const sc=$('savesCard'); sc.innerHTML='';
+  for(const[k,nm] of [['fort','Fortitude'],['ref','Reflex'],['will','Will']]){
+    const sv=S.saves[k], ab=abm(smap[k]), tot=sv.base+ab+sv.magic+sv.misc+sv.temp;
+    const saveEnl=enl&&smap[k]==='DEX';
+    const savClr=saveEnl?'color:var(--blue);font-size:1.1rem':'font-size:1.1rem';
+    sc.innerHTML+=`<div class="inline-stat"><span class="label">${nm} <span class="tip-btn" onclick="tip('${nm}','${stips[k]}')">?</span></span><span class="value cv" style="${savClr}">${ms(tot)}</span></div>
+    <div class="inline-stat" style="padding:3px 0 7px;gap:6px">
+      <span class="label" style="font-size:.7rem;color:var(--dim)">Base</span>
+      <input class="ev" type="number" value="${sv.base}" onchange="S.saves.${k}.base=+this.value||0;recalc()" style="width:38px;font-size:.85rem;padding:2px">
+      <span class="label" style="font-size:.7rem;color:var(--dim);margin-left:6px">Misc</span>
+      <input class="ev" type="number" value="${sv.misc}" onchange="S.saves.${k}.misc=+this.value||0;recalc()" style="width:38px;font-size:.85rem;padding:2px">
+      <span style="font-size:.65rem;color:${saveEnl?'var(--blue)':'var(--dim)'};margin-left:auto">${AB_FULL[smap[k]].slice(0,3)} ${ms(ab)}</span>
+    </div>`;
+  }
+  sc.innerHTML+=`<div style="margin-top:4px;padding:6px 8px;background:var(--input);border-radius:4px;font-size:.72rem;color:var(--text2);line-height:1.4">
+    <strong style="color:var(--accent)">Conditional:</strong> +3 vs poison (Hardy +2, Glory of Old +1) · +3 vs spells &amp; SLAs (Hardy +2, Glory of Old +1) · Poison Resistance +4 (class) stacks for <strong>+7 total vs poison</strong></div>`;
+
+  // ACP
+  let acp=0;
+  const armorSlot=S.slots['Armor'];
+  if(armorSlot){const a=S.gear.equip.find(x=>x.id===armorSlot);if(a)acp=a.acp||0;}
+  const shieldSlot=S.slots['Shield'];
+  if(shieldSlot){const sh=S.gear.equip.find(x=>x.id===shieldSlot);if(sh)acp+=(sh.acp||0);}
+  $('dv-acp').textContent=acp;
+
+  // Abilities display
+  ABILS.forEach(a=>{const e=$('ab-mod-'+a);if(e){e.textContent=ms(abm(a));
+    const hasTemp=S.abilTemp[a];
+    const hasEnlarge=enl&&(a==='STR'||a==='DEX');
+    e.style.color=(hasTemp||hasEnlarge)?'var(--blue)':''}});
+
+  // Skills — highlight DEX-based skill totals when enlarged
+  SKILLS.forEach(([name,abk])=>{
+    const sid='sk-'+name.replace(/[^a-zA-Z]/g,'');
+    if(!S.skills[sid])S.skills[sid]={ranks:0,misc:0,cs:false};
+    const sk=S.skills[sid], abMod=abm(abk), ranks=+sk.ranks||0, misc=+sk.misc||0;
+    const csB=(sk.cs&&ranks>0)?3:0;
+    let acpP=ACP_SKILLS.includes(name)?acp:0;
+    const tot=abMod+ranks+misc+csB+acpP;
+    const el=$(sid+'-total');if(el){
+      el.textContent=ms(tot);
+      el.style.color=(enl&&abk==='DEX')?'var(--blue)':'';
+    }
+  });
+  save();
+}
+
+// RENDER
+function renderApp(){
+  $('headerName').textContent=S.name||'Character';
+  $('headerInfo').textContent=`${S.race} ${S.cls} ${S.level}`;
+  $('bannerName').textContent=S.name||'Character';
+  $('bannerSub').textContent=`${S.race} ${S.cls} ${S.level}${S.deity?' · '+S.deity:''}`;
+  // Banner image
+  const banner=$('charBanner');
+  if(S.bgImage){
+    banner.innerHTML=`<img class="char-banner-img" src="${S.bgImage}" alt="">
+      <div class="char-banner-gradient" onclick="openPortrait()"></div>
+      <div class="char-banner-info"><div class="char-banner-name" id="bannerName">${S.name||'Character'}</div>
+      <div class="char-banner-sub" id="bannerSub">${S.race} ${S.cls} ${S.level}${S.deity?' · '+S.deity:''}</div></div>`;
+  } else {
+    banner.innerHTML=`<div class="char-banner-placeholder"><span>⚔</span></div>
+      <div class="char-banner-gradient"></div>
+      <div class="char-banner-info"><div class="char-banner-name" id="bannerName">${S.name||'Character'}</div>
+      <div class="char-banner-sub" id="bannerSub">${S.race} ${S.cls} ${S.level}${S.deity?' · '+S.deity:''}</div></div>`;
+  }
+  $('dv-speed').textContent=S.speed+' ft.';
+  const effSize=S.enlarged?'L':S.size;
+  $('dv-size').textContent={T:'Tiny',S:'Small',M:'Medium',L:'Large'}[effSize]||'Medium';
+  if(S.enlarged)$('dv-size').style.color='var(--blue)';else $('dv-size').style.color='';
+  $('dv-senses').textContent=S.senses||'—';
+  $('dv-lang').textContent=S.languages||'Common';
+  $('hpCur').textContent=S.hp; $('hpMax').textContent=S.maxHp; updHPc();
+  // Enlarge visuals (if toggle exists)
+  const eRow=$('enlargeRow'),eTog=$('enlargeToggle'),eBan=$('enlargeBanner'),hdr=document.querySelector('.app-header');
+  if(eRow){
+    if(S.enlarged){eRow.classList.add('active');eTog.classList.add('on');eBan.classList.add('show');hdr.classList.add('enlarged')}
+    else{eRow.classList.remove('active');eTog.classList.remove('on');eBan.classList.remove('show');hdr.classList.remove('enlarged')}
+  }
+
+  // Ability grid
+  const ag=$('abilityGrid');ag.innerHTML='';
+  ABILS.forEach(a=>{
+    const tmp=S.abilTemp[a]||0;
+    ag.innerHTML+=`<div class="ability-box" style="flex-wrap:wrap;gap:4px">
+      <span class="ab-label">${a}</span>
+      <input class="ev ab-score" id="ab-score-${a}" type="number" value="${S.abilities[a]}"
+        onchange="S.abilities['${a}']=+this.value||10;recalc()" style="width:36px;padding:2px">
+      <span style="font-size:.55rem;color:var(--dim)">tmp</span>
+      <input class="ev" id="ab-tmp-${a}" type="number" value="${tmp}"
+        onchange="S.abilTemp['${a}']=+this.value||0;recalc()" style="width:32px;padding:2px;font-size:.85rem;color:${tmp?'var(--blue)':'var(--text)'}">
+      <span class="ab-mod" id="ab-mod-${a}" style="${tmp?'color:var(--blue)':''}">${ms(abm(a))}</span>
+      <span class="tip-btn" onclick="tip('${a}','${AB_TIPS[a]}')">?</span>
+    </div>`;
+  });
+
+  // Fields
+  $('dv-xp').value=S.xp; $('dv-xpn').value=S.xpN; $('dv-bab').value=S.bab;
+  $('dv-initmisc').value=S.initMisc||0;
+  $('dv-sr').value=S.sr; $('dv-dr').value=S.dr; $('dv-gp').value=S.gp;
+  $('ac-armor').value=S.ac.armor; $('ac-shield').value=S.ac.shield;
+  $('ac-nat').value=S.ac.natural; $('ac-defl').value=S.ac.deflect;
+  $('ac-dodge').value=S.ac.dodge||0; $('ac-misc').value=S.ac.misc; $('ac-maxdex').value=S.ac.maxDex;
+  $('ac-sf').value=S.ac.spellFail; $('dv-rdmg').value=S.rdmg;
+
+  if(S.bgImage)$('charBg').style.backgroundImage=`url(${S.bgImage})`;
+
+  // Wield mode
+  document.querySelectorAll('.wield-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelector(`.wield-btn[onclick="setWield('${S.wield}')"]`)?.classList.add('active');
+
+  renderTabs(); renderGear(); renderSkills(); renderFeats(); renderAtkCards();
+  renderComp(); renderPowers(); renderDH(); syncArmorAC(); recalc();
+  // Notes
+  const nt=$('notes-text');if(nt)nt.value=S.notes||'';
+}
+
+function renderTabs(){
+  const tabs=[{id:'character',icon:'👤',l:'Char'},{id:'attack',icon:'⚔️',l:'Attack'},
+    {id:'defense',icon:'🛡️',l:'Defense'},{id:'gear',icon:'🎒',l:'Gear'},
+    {id:'skills',icon:'📜',l:'Skills'},{id:'feats',icon:'✦',l:'Feats'}];
+  if(S.hasComp)tabs.push({id:'companion',icon:'🐾',l:'Comp.'});
+  if(S.hasPow)tabs.push({id:'powers',icon:'✨',l:'Powers'});
+  tabs.push({id:'notes',icon:'📝',l:'Notes'});
+  $('tabBar').innerHTML=tabs.map(t=>
+    `<button class="tab-item ${t.id==='character'?'active':''}" data-tab="${t.id}" onclick="switchTab('${t.id}')">
+      <span class="tab-icon">${t.icon}</span>${t.l}</button>`).join('');
+}
+
+function switchTab(id){
+  document.querySelectorAll('.tab-page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab-item').forEach(t=>t.classList.remove('active'));
+  $('page-'+id)?.classList.add('active');
+  document.querySelector(`.tab-item[data-tab="${id}"]`)?.classList.add('active');
+  $('contentArea').scrollTop=0;
+}
+
+function setWield(m){S.wield=m;
+  document.querySelectorAll('.wield-btn').forEach(b=>b.classList.remove('active'));
+  event.target.classList.add('active');
+  recalc(); renderEqWeapon();
+}
+
+// HP
+function adjHP(d){S.hp=Math.max(0,S.hp+d);$('hpCur').textContent=S.hp;updHPc();save()}
+function updHPc(){const p=S.maxHp>0?S.hp/S.maxHp:0;const e=$('hpCur');
+  if(S.hp>S.maxHp) e.style.color='var(--blue)';
+  else if(p>.5) e.style.color='var(--green)';
+  else if(p>.25) e.style.color='#d4a843';
+  else e.style.color='var(--red)'}
+function adjCHP(d){S.comp.hp=Math.max(0,S.comp.hp+d);$('cHpCur').textContent=S.comp.hp;save()}
+
+// GEAR
+function showGS(s){document.querySelectorAll('.gear-sub').forEach(x=>x.classList.add('hidden'));
+  $('gs-'+s).classList.remove('hidden');
+  document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));event.target.classList.add('active')}
+
+function renderGear(){
+  // Weapons
+  const wl=$('gearWeaponsList');wl.innerHTML='';
+  S.gear.weapons.forEach((w,i)=>{
+    const isMain=S.equippedWeapons.main===w.id, isOff=S.equippedWeapons.off===w.id;
+    wl.innerHTML+=`<div class="gear-item" style="flex-wrap:wrap">
+      <div style="display:flex;gap:3px;flex-shrink:0">
+        <button style="font-size:.6rem;padding:3px 6px;border-radius:3px;border:1px solid ${isMain?'var(--accent)':'var(--border)'};background:${isMain?'var(--accent-glow)':'var(--input)'};color:${isMain?'var(--accent)':'var(--dim)'};font-family:'Cinzel',serif;cursor:pointer;text-transform:uppercase;letter-spacing:.5px" onclick="togWpnEquip('${w.id}','main')">Main</button>
+        <button style="font-size:.6rem;padding:3px 6px;border-radius:3px;border:1px solid ${isOff?'var(--accent)':'var(--border)'};background:${isOff?'var(--accent-glow)':'var(--input)'};color:${isOff?'var(--accent)':'var(--dim)'};font-family:'Cinzel',serif;cursor:pointer;text-transform:uppercase;letter-spacing:.5px" onclick="togWpnEquip('${w.id}','off')">Off</button>
+      </div>
+      <span class="gear-item-name">${w.name}
+        <span style="font-size:.72rem;color:var(--dim)">${w.damage||''} ${w.crit||''} ${w.damageType||''}</span></span>
+      <span class="gear-item-weight">${w.weight||0} lb</span>
+      <button class="gear-item-remove" onclick="rmGear('weapons',${i})">×</button>
+    </div>`;
+  });
+
+  // Equipment slots
+  const sg=$('slotGrid');sg.innerHTML='';
+  SLOTS.forEach(slot=>{
+    const itemId=S.slots[slot];
+    const item=itemId?S.gear.equip.find(x=>x.id===itemId):null;
+    let detail='';
+    if(item){
+      const parts=[];
+      if(item.bonus) parts.push('+'+item.bonus+' AC');
+      if(item.properties) parts.push(item.properties);
+      detail=parts.join(' · ');
+    }
+    sg.innerHTML+=`<div class="slot-box ${item?'filled':''}" onclick="${item?`viewEquipItem('${item.id}','${slot}')`:`openSlotPick('${slot}')`}">
+      <div class="slot-label">${slot}</div>
+      <div class="slot-item ${item?'':'empty'}">${item?item.name:'Empty'}</div>
+      ${detail?`<div style="font-size:.65rem;color:var(--accent);margin-top:1px">${detail}</div>`:''}
+    </div>`;
+  });
+
+  // Unequipped equip items
+  const el=$('gearEquipList');el.innerHTML='';
+  const equipped=new Set(Object.values(S.slots).filter(Boolean));
+  S.gear.equip.forEach((item,i)=>{
+    if(equipped.has(item.id)) return;
+    const parts=[];
+    if(item.bonus) parts.push('+'+item.bonus+' AC');
+    if(item.armorType) parts.push(item.armorType);
+    if(item.acp) parts.push('ACP '+item.acp);
+    if(item.spellFail) parts.push(item.spellFail+'% SF');
+    if(item.properties) parts.push(item.properties);
+    const info=parts.join(' · ');
+    el.innerHTML+=`<div class="gear-item" style="flex-wrap:wrap">
+      <span class="gear-item-name">${item.name} ${info?`<span style="font-size:.7rem;color:var(--dim)">${info}</span>`:''}</span>
+      <span class="gear-item-weight">${item.weight||0} lb</span>
+      <button class="gear-item-remove" onclick="rmGear('equip',${i})">×</button>
+    </div>`;
+  });
+
+  // Other
+  const ol=$('gearOtherList');ol.innerHTML='';
+  S.gear.other.forEach((item,i)=>{
+    ol.innerHTML+=`<div class="gear-item">
+      <span class="gear-item-name">${item.name} ${item.properties?'<span style="font-size:.72rem;color:var(--dim)">'+item.properties+'</span>':''}</span>
+      <span class="gear-item-weight">${item.weight||0} lb</span>
+      <button class="gear-item-remove" onclick="rmGear('other',${i})">×</button>
+    </div>`;
+  });
+
+  renderEqWeapon(); renderEqArmor();
+}
+
+function togWpnEquip(wid,hand){
+  if(hand==='main') S.equippedWeapons.main=S.equippedWeapons.main===wid?null:wid;
+  else S.equippedWeapons.off=S.equippedWeapons.off===wid?null:wid;
+  // Can't have same weapon in both hands
+  if(hand==='main'&&S.equippedWeapons.off===wid) S.equippedWeapons.off=null;
+  if(hand==='off'&&S.equippedWeapons.main===wid) S.equippedWeapons.main=null;
+  renderGear();recalc();
+}
+
+function rmGear(cat,i){
+  const item=S.gear[cat][i];
+  if(cat==='weapons'){
+    if(S.equippedWeapons.main===item.id) S.equippedWeapons.main=null;
+    if(S.equippedWeapons.off===item.id) S.equippedWeapons.off=null;
+  }
+  if(cat==='equip'){
+    for(const slot of SLOTS){if(S.slots[slot]===item.id)delete S.slots[slot]}
+  }
+  S.gear[cat].splice(i,1); renderGear(); recalc();
+}
+
+function viewEquipItem(itemId,slot){
+  const item=S.gear.equip.find(x=>x.id===itemId);
+  if(!item)return;
+  let details='';
+  if(item.bonus) details+=`<div class="inline-stat"><span class="label">AC Bonus</span><span class="value">+${item.bonus}</span></div>`;
+  if(item.armorType) details+=`<div class="inline-stat"><span class="label">Type</span><span class="value">${item.armorType}</span></div>`;
+  if(item.maxDex!=null&&item.maxDex<99) details+=`<div class="inline-stat"><span class="label">Max DEX</span><span class="value">+${item.maxDex}</span></div>`;
+  if(item.acp) details+=`<div class="inline-stat"><span class="label">Check Penalty</span><span class="value">${item.acp}</span></div>`;
+  if(item.spellFail) details+=`<div class="inline-stat"><span class="label">Spell Failure</span><span class="value">${item.spellFail}%</span></div>`;
+  if(item.weight) details+=`<div class="inline-stat"><span class="label">Weight</span><span class="value">${item.weight} lb</span></div>`;
+  if(item.properties) details+=`<div class="inline-stat"><span class="label">Properties</span><span class="value" style="font-size:.8rem;text-align:right;max-width:55%">${item.properties}</span></div>`;
+  showMod(`<div class="modal-title">${item.name}</div>
+    <div style="font-size:.7rem;color:var(--dim);margin-bottom:10px;text-transform:uppercase">Equipped: ${slot}</div>
+    <div class="stat-card">${details||'<div style="color:var(--dim);font-style:italic">No additional stats.</div>'}</div>
+    <div class="modal-actions">
+      <button class="modal-btn secondary" onclick="assignSlot('${slot}',null);closeMod()">Unequip</button>
+      <button class="modal-btn secondary" onclick="closeMod();openSlotPick('${slot}')">Swap</button>
+      <button class="modal-btn primary" onclick="closeMod()">Close</button>
+    </div>`);
+}
+
+function openSlotPick(slot){
+  const items=S.gear.equip;
+  let opts=items.map((item,i)=>`<div class="gear-item" style="cursor:pointer" onclick="assignSlot('${slot}','${item.id}')">
+    <span class="gear-item-name">${item.name}</span></div>`).join('');
+  opts+=`<div class="gear-item" style="cursor:pointer" onclick="assignSlot('${slot}',null)">
+    <span class="gear-item-name" style="color:var(--dim);font-style:italic">Remove / Empty</span></div>`;
+  showMod(`<div class="modal-title">Assign to ${slot}</div>${opts}`);
+}
+
+function assignSlot(slot,itemId){
+  // Remove item from any other slot first
+  if(itemId){for(const s of SLOTS){if(S.slots[s]===itemId)delete S.slots[s]}}
+  if(itemId) S.slots[slot]=itemId; else delete S.slots[slot];
+  // Sync AC from armor/shield slots
+  syncArmorAC();
+  closeMod(); renderGear(); recalc();
+}
+
+function renderEqWeapon(){
+  const c=$('equippedWeaponCard');
+  const mainW=S.equippedWeapons.main?S.gear.weapons.find(x=>x.id===S.equippedWeapons.main):null;
+  const offW=S.equippedWeapons.off?S.gear.weapons.find(x=>x.id===S.equippedWeapons.off):null;
+  if(!mainW&&!offW){c.innerHTML='<div style="color:var(--dim);font-style:italic;font-size:.9rem">No weapon equipped. Tap a weapon in Gear to assign it, or use settings below.</div>';return;}
+  let h='';
+  const renderW=(w,label)=>{
+    h+=`<div style="font-weight:700;font-size:.95rem;margin-bottom:4px;color:var(--accent)">${label}: ${w.name}</div>
+    <div class="inline-stat"><span class="label">Damage</span><span class="value">${w.damage||'—'}</span></div>
+    <div class="inline-stat"><span class="label">Critical</span><span class="value">${w.crit||'20/×2'}</span></div>
+    <div class="inline-stat"><span class="label">Type</span><span class="value">${w.damageType||'—'}</span></div>
+    ${w.range?`<div class="inline-stat"><span class="label">Range</span><span class="value">${w.range}</span></div>`:''}
+    ${w.ammo!=null?`<div class="inline-stat"><span class="label">Ammo</span><span class="value" style="display:flex;align-items:center;gap:4px">
+      <button class="hp-btn minus" style="width:22px;height:22px;font-size:.9rem" onclick="adjAmmo('${w.id}',-1)">−</button>
+      <span id="ammo-${w.id}">${w.ammo}</span>
+      <button class="hp-btn plus" style="width:22px;height:22px;font-size:.9rem" onclick="adjAmmo('${w.id}',1)">+</button>
+    </span></div>`:''}
+    ${w.properties?`<div class="inline-stat"><span class="label">Properties</span><span class="value" style="font-size:.78rem;text-align:right;max-width:55%">${w.properties}</span></div>`:''}`;
+  };
+  if(mainW) renderW(mainW, S.wield==='twohanded'?'Two-Handed':'Main Hand');
+  if(offW&&S.wield==='dualwield') renderW(offW,'Off Hand');
+  c.innerHTML=h;
+}
+
+function adjAmmo(wid,d){const w=S.gear.weapons.find(x=>x.id===wid);if(!w||w.ammo==null)return;
+  w.ammo=Math.max(0,w.ammo+d);const e=$('ammo-'+wid);if(e)e.textContent=w.ammo;save()}
+
+function renderEqArmor(){
+  const c=$('eqArmorCard');
+  const armorItem=S.slots['Armor']?S.gear.equip.find(x=>x.id===S.slots['Armor']):null;
+  const shieldItem=S.slots['Shield']?S.gear.equip.find(x=>x.id===S.slots['Shield']):null;
+  if(!armorItem&&!shieldItem){c.innerHTML='<div style="color:var(--dim);font-style:italic;font-size:.9rem">No armor equipped.</div>';return;}
+  let h='';
+  const renderA=(a,label)=>{
+    h+=`<div style="font-weight:700;font-size:.95rem;margin-bottom:4px">${label}: ${a.name}</div>
+    <div class="inline-stat"><span class="label">AC Bonus</span><span class="value">+${a.bonus||0}</span></div>
+    <div class="inline-stat"><span class="label">Type</span><span class="value">${a.armorType||'—'}</span></div>
+    <div class="inline-stat"><span class="label">Max DEX</span><span class="value">${a.maxDex!=null?'+'+a.maxDex:'—'}</span></div>
+    <div class="inline-stat"><span class="label">Check Penalty</span><span class="value">${a.acp||0}</span></div>
+    <div class="inline-stat"><span class="label">Spell Failure</span><span class="value">${a.spellFail||0}%</span></div>`;
+  };
+  if(armorItem) renderA(armorItem,'Armor');
+  if(shieldItem) renderA(shieldItem,'Shield');
+  c.innerHTML=h;
+}
+
+// SKILLS
+function renderSkills(){
+  const l=$('skillsList');l.innerHTML='';
+  SKILLS.forEach(([name,abk])=>{
+    const sid='sk-'+name.replace(/[^a-zA-Z]/g,'');
+    if(!S.skills[sid])S.skills[sid]={ranks:0,misc:0,cs:false};
+    const sk=S.skills[sid];
+    l.innerHTML+=`<div class="skill-row">
+      <div class="skill-cs ${sk.cs?'checked':''}" onclick="togCS('${sid}')">${sk.cs?'CS':'CS'}</div>
+      <span class="skill-name">${name} <span style="font-size:.65rem;color:var(--dim)">${abk}</span></span>
+      <input class="ev" id="${sid}-ranks" type="number" value="${sk.ranks}"
+        onchange="S.skills['${sid}'].ranks=+this.value||0;recalc()" style="width:30px;padding:2px;font-size:.85rem">
+      <input class="ev" id="${sid}-misc" type="number" value="${sk.misc}"
+        onchange="S.skills['${sid}'].misc=+this.value||0;recalc()" style="width:30px;padding:2px;font-size:.85rem">
+      <span class="skill-total" id="${sid}-total">+0</span>
+    </div>`;
+  });
+}
+function togCS(sid){S.skills[sid].cs=!S.skills[sid].cs;renderSkills();recalc()}
+
+// FEATS
+function renderFeats(){
+  ['always','combat','special','companion'].forEach(cat=>{
+    const c=$('feats-'+cat);if(!c)return;c.innerHTML='';
+    (S.feats[cat]||[]).forEach((f,i)=>{
+      c.innerHTML+=`<div class="feat-item"><div style="display:flex;justify-content:space-between;align-items:start">
+        <div class="feat-item-name">${f.name}</div>
+        <button class="gear-item-remove" onclick="S.feats['${cat}'].splice(${i},1);renderFeats();save()">×</button>
+      </div>${f.desc?`<div class="feat-item-desc">${f.desc}</div>`:''}</div>`;
+    });
+  });
+}
+function toggleFS(cat){$('feats-'+cat).classList.toggle('collapsed');$('chev-'+cat).classList.toggle('open')}
+
+// ATTACK CARDS
+function renderAtkCards(){
+  const c=$('atkCards');c.innerHTML='';
+  if(!S.atkCards.length){c.innerHTML='<div style="color:var(--dim);font-style:italic;font-size:.9rem">No attack cards yet.</div>';$('atkCardsHint').style.display='none';}
+  else{$('atkCardsHint').style.display='block';}
+  S.atkCards.forEach((card,i)=>{
+    const bgS=card.bgImg?`background-image:linear-gradient(135deg,rgba(35,32,27,.88),rgba(35,32,27,.92)),url(${card.bgImg});background-size:cover;background-position:center;`:'';
+    c.innerHTML+=`<div class="attack-card" style="${bgS}" onclick="openCardView('player',${i})"><div class="attack-card-header" style="display:flex;justify-content:space-between">
+      ${card.name}<button class="gear-item-remove" onclick="event.stopPropagation();confirmDeleteCard('player',${i})">×</button></div>
+      <div class="attack-card-body">${card.body.replace(/\n/g,'<br>')}</div></div>`;
+  });
+  const cc=$('compAtkCards');if(cc){cc.innerHTML='';
+    if(!S.compAtkCards.length){cc.innerHTML='<div style="color:var(--dim);font-style:italic;font-size:.9rem">No companion attacks.</div>';
+      const h=$('compAtkCardsHint');if(h)h.style.display='none';}
+    else{const h=$('compAtkCardsHint');if(h)h.style.display='block';}
+    S.compAtkCards.forEach((card,i)=>{
+      const bgS=card.bgImg?`background-image:linear-gradient(135deg,rgba(35,32,27,.88),rgba(35,32,27,.92)),url(${card.bgImg});background-size:cover;background-position:center;`:'';
+      cc.innerHTML+=`<div class="attack-card" style="${bgS}" onclick="openCardView('companion',${i})"><div class="attack-card-header" style="display:flex;justify-content:space-between">
+        ${card.name}<button class="gear-item-remove" onclick="event.stopPropagation();confirmDeleteCard('companion',${i})">×</button></div>
+        <div class="attack-card-body">${card.body.replace(/\n/g,'<br>')}</div></div>`;
+    });
+  }
+}
+
+function confirmDeleteCard(type, idx){
+  const cards = type==='companion' ? S.compAtkCards : S.atkCards;
+  const card = cards[idx];
+  if(!card) return;
+  showMod(`<div class="modal-title">Delete Attack Card</div>
+    <div style="color:var(--text2);margin:12px 0">Remove <strong style="color:var(--accent)">${card.name}</strong>? This cannot be undone.</div>
+    <div class="modal-actions"><button class="modal-btn secondary" onclick="closeMod()">Cancel</button>
+    <button class="modal-btn primary" style="background:var(--red)" onclick="doDeleteCard('${type}',${idx})">Delete</button></div>`);
+}
+function doDeleteCard(type, idx){
+  if(type==='companion') S.compAtkCards.splice(idx,1);
+  else S.atkCards.splice(idx,1);
+  renderAtkCards(); save(); closeMod();
+}
+
+// FULLSCREEN CARD VIEW
+let cardViewCards=[], cardViewIdx=0, cardTouchX=0;
+function openCardView(type,startIdx){
+  cardViewCards = type==='companion' ? S.compAtkCards : S.atkCards;
+  if(!cardViewCards.length) return;
+  cardViewIdx=startIdx||0;
+  renderCardView();
+  $('cardOverlay').classList.add('open');
+}
+function closeCardView(){$('cardOverlay').classList.remove('open')}
+
+function renderCardView(){
+  const car=$('cardCarousel');
+  car.innerHTML=cardViewCards.map((card,i)=>{
+    const pos=i===cardViewIdx?'active':i<cardViewIdx?'left':'right';
+    const bgStyle=card.bgImg?`background-image:url(${card.bgImg});background-size:cover;background-position:center;`:'';
+    return `<div class="card-slide ${pos}">
+      <div class="card-fullscreen">
+        <div class="card-fs-bg" style="${bgStyle}"></div>
+        <div class="card-fs-content">
+          <div class="card-fs-title">${card.name}</div>
+          <div class="card-fs-body">${card.body.replace(/\n/g,'\n')}</div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+  const pips=$('cardPips');
+  pips.innerHTML=cardViewCards.map((_,i)=>
+    `<div class="card-pip ${i===cardViewIdx?'active':''}"></div>`).join('');
+}
+
+function cardNav(dir){
+  const next=cardViewIdx+dir;
+  if(next<0||next>=cardViewCards.length) return;
+  cardViewIdx=next;
+  renderCardView();
+}
+
+// Touch swipe for cards
+document.addEventListener('DOMContentLoaded',()=>{
+  const car=$('cardCarousel');
+  if(!car) return;
+  car.addEventListener('touchstart',e=>{cardTouchX=e.touches[0].clientX},{passive:true});
+  car.addEventListener('touchend',e=>{
+    const dx=e.changedTouches[0].clientX-cardTouchX;
+    if(Math.abs(dx)>50){
+      if(dx<0) cardNav(1); // swipe left = next
+      else cardNav(-1); // swipe right = prev
+    }
+  },{passive:true});
+  // Mouse fallback
+  let mouseDown=false,mouseX=0;
+  car.addEventListener('mousedown',e=>{mouseDown=true;mouseX=e.clientX});
+  car.addEventListener('mouseup',e=>{
+    if(!mouseDown) return; mouseDown=false;
+    const dx=e.clientX-mouseX;
+    if(Math.abs(dx)>50){if(dx<0)cardNav(1);else cardNav(-1);}
+  });
+});
+
+// COMPANION
+function renderComp(){
+  if(!S.hasComp)return;
+  // Companion portrait
+  const pw=$('compPortraitWrap');
+  if(pw && COMP_IMG){
+    pw.innerHTML=`<img class="comp-portrait" src="${COMP_IMG}" alt="${S.comp.name||'Companion'}" onclick="openCompPortrait()">`;
+  }
+  $('comp-name').value=S.comp.name;$('comp-type').value=S.comp.type;
+  $('cHpCur').textContent=S.comp.hp;$('cHpMax').textContent=S.comp.maxHp;
+  $('comp-ac').value=S.comp.ac;$('comp-spd').value=S.comp.speed;
+  $('comp-fort').value=S.comp.fort;$('comp-ref').value=S.comp.ref;$('comp-will').value=S.comp.will;
+  const g=$('compAbGrid');g.innerHTML='';
+  ABILS.forEach(a=>{const sc=S.comp.abilities[a]||10;
+    g.innerHTML+=`<div class="ability-box"><span class="ab-label">${a}</span>
+      <input class="ev" type="number" value="${sc}" onchange="S.comp.abilities['${a}']=+this.value||10;save()" style="width:38px">
+      <span class="ab-mod">${ms(mod(sc))}</span></div>`;
+  });
+}
+
+// POWERS
+function renderPowers(){
+  if(!S.hasPow)return;
+  // --- Daily resources as tappable pips ---
+  const rs=$('resSec');
+  if(rs){
+    if(!S.resources||!S.resources.length){
+      rs.innerHTML='<div style="color:var(--dim);font-style:italic;font-size:.85rem">No tracked resources.</div>';
+    } else {
+      let html='';
+      S.resources.forEach((r,ri)=>{
+        const remaining=r.max-r.used;
+        let pips='';
+        for(let i=0;i<r.max;i++){
+          const on=i<remaining;
+          pips+=`<span onclick="togRes(${ri},${i})" style="display:inline-block;width:18px;height:18px;border-radius:50%;margin:3px;cursor:pointer;border:2px solid var(--accent);background:${on?'var(--accent)':'transparent'}"></span>`;
+        }
+        html+=`<div style="margin-bottom:12px"><div style="font-size:.85rem;color:var(--text);margin-bottom:2px">${r.name} <span style="color:var(--dim);font-size:.72rem">${remaining}/${r.max}</span></div><div style="display:flex;flex-wrap:wrap">${pips}</div></div>`;
+      });
+      rs.innerHTML=html;
+    }
+  }
+  // --- Prepared spells (assign / cast / restore) ---
+  const sc=$('spellSec');sc.innerHTML='';
+  if(!S.preparedExtracts||!S.preparedExtracts.length){
+    sc.innerHTML='<div style="color:var(--dim);font-style:italic;font-size:.85rem">No spells prepared. Hit \u201cNew Day\u201d to prepare today\'s spells.</div>';
+  } else {
+    S.spellLevels.forEach((sl)=>{
+      const prepared=S.preparedExtracts.filter(e=>e.level===sl.level);
+      if(!prepared.length)return;
+      const isCantrip=sl.level===0;
+      const active=prepared.filter(e=>!e.consumed).length;
+      const header=isCantrip?'Cantrips \u2014 at-will':('Level '+sl.level+' \u2014 '+active+' remaining');
+      sc.innerHTML+=`<div class="extract-level-header">${header}</div>`;
+      let items='';
+      prepared.forEach(e=>{
+        const gi=S.preparedExtracts.indexOf(e);
+        items+=`<span class="extract-item${e.consumed?' consumed':''}" onclick="consumeExtract(${gi})">${e.name}</span>`;
+      });
+      sc.innerHTML+=`<div style="display:flex;flex-wrap:wrap;margin-bottom:6px">${items}</div>`;
+    });
+  }
+}
+function togRes(ri,i){
+  const r=S.resources[ri];if(!r)return;
+  const remaining=r.max-r.used;
+  if(i<remaining){r.used=r.max-i;}else{r.used=r.max-i-1;}
+  if(r.used<0)r.used=0;if(r.used>r.max)r.used=r.max;
+  renderPowers();save();
+}
+function consumeExtract(idx){
+  const e=S.preparedExtracts[idx];if(!e)return;
+  const desc=FORMULA_DESCS[e.name]||'No description available.';
+  if(e.level===0){
+    showMod(`<div class="modal-title">${e.name} <span style="font-size:.7rem;color:var(--dim)">(Cantrip)</span></div>
+      <div style="color:var(--text2);margin:10px 0;font-size:.9rem;line-height:1.5">${desc}</div>
+      <div class="modal-actions"><button class="modal-btn primary" onclick="closeMod()">Close</button></div>`);
+    return;
+  }
+  const verb=e.consumed?'Restore Slot':'Cast Spell';
+  showMod(`<div class="modal-title">${e.name} <span style="font-size:.7rem;color:var(--dim)">(Level ${e.level})</span></div>
+    <div style="color:var(--text2);margin:10px 0;font-size:.9rem;line-height:1.5">${desc}</div>
+    <div class="modal-actions">
+      <button class="modal-btn secondary" onclick="closeMod()">Cancel</button>
+      <button class="modal-btn primary" onclick="doConsumeExtract(${idx})">${verb}</button>
+    </div>`);
+}
+function doConsumeExtract(idx){
+  const e=S.preparedExtracts[idx];if(!e)return;
+  e.consumed=!e.consumed; // toggle, so an accidental cast can be undone
+  closeMod();renderPowers();save();
+}
+function newDay(){
+  S.resources.forEach(r=>r.used=0);
+  let html='<div class="modal-title">Prepare Spells</div>';
+  html+='<div style="color:var(--text2);font-size:.85rem;margin-bottom:12px">Choose what to prepare in each slot.</div>';
+  S.spellLevels.forEach((sl)=>{
+    const known=(sl.spells||'').split(',').map(s=>s.trim()).filter(s=>s);
+    const opts=known.map(k=>`<option value="${k}">${k}</option>`).join('');
+    const lbl=sl.level===0?'Cantrips':'Level '+sl.level;
+    html+=`<div class="prep-modal-level"><h4>${lbl} \u2014 ${sl.slots} slots</h4>`;
+    for(let i=0;i<sl.slots;i++){
+      html+=`<div class="prep-slot"><span style="color:var(--dim);font-size:.75rem;width:20px">${i+1}.</span><select id="prep-${sl.level}-${i}">${opts}</select></div>`;
+    }
+    html+='</div>';
+  });
+  html+='<div class="modal-actions"><button class="modal-btn primary" onclick="confirmPrep()">Prepare &amp; Start Day</button></div>';
+  showMod(html);
+}
+function confirmPrep(){
+  S.preparedExtracts=[];
+  S.spellLevels.forEach(sl=>{
+    for(let i=0;i<sl.slots;i++){
+      const sel=$('prep-'+sl.level+'-'+i);
+      if(sel&&sel.value) S.preparedExtracts.push({level:sl.level,name:sel.value,consumed:false});
+    }
+  });
+  closeMod();renderPowers();save();
+}
+function longRest(){newDay()}
+
+// DICE
+function toggleDice(){$('diceOvl').classList.toggle('open')}
+function roll(sides){
+  const m=+$('diceMod').value||0;const re=$('diceRes'),br=$('diceBrk');
+  re.classList.add('rolling');let t=0;
+  const iv=setInterval(()=>{re.textContent=Math.floor(Math.random()*sides*diceN)+1;t++;
+    if(t>8){clearInterval(iv);re.classList.remove('rolling');
+      const rolls=[];for(let i=0;i<diceN;i++)rolls.push(Math.floor(Math.random()*sides)+1);
+      const sum=rolls.reduce((a,b)=>a+b,0),total=sum+m;
+      re.textContent=total;re.style.transform='scale(1.15)';setTimeout(()=>re.style.transform='scale(1)',150);
+      const ms2=m!==0?(m>0?'+'+m:m):'';
+      br.textContent=diceN>1?`[${rolls.join(', ')}]${ms2?' '+ms2:''} = ${total}`:`d${sides}${ms2} = ${total}`;
+      S.diceHist.unshift({expr:`${diceN}d${sides}${ms2}`,result:total,time:Date.now()});
+      if(S.diceHist.length>20)S.diceHist.pop();renderDH();save();
+    }
+  },50);
+}
+function renderDH(){$('diceHist').innerHTML=S.diceHist.map(h=>`<div class="dice-history-item">${h.expr} → <strong style="color:var(--accent)">${h.result}</strong></div>`).join('')}
+
+// TOOLTIP
+function tip(title,text){$('tipT').textContent=title;$('tipX').textContent=text;$('tipOvl').classList.add('show')}
+function openPortrait(){if(!S.bgImage)return;$('portraitImg').src=S.bgImage;$('portraitOvl').classList.add('show')}
+function openCompPortrait(){if(!COMP_IMG)return;$('portraitImg').src=COMP_IMG;$('portraitOvl').classList.add('show')}
+
+// MODAL
+function closeMod(){$('modOvl').classList.remove('show')}
+function showMod(html){$('modBox').innerHTML=html;$('modOvl').classList.add('show')}
+
+function openAddGear(cat){
+  let f='';
+  if(cat==='weapons'){
+    f=`<div class="modal-field"><label>Name</label><input id="m-name"></div>
+    <div class="modal-field"><label>Damage</label><input id="m-dmg" placeholder="1d8"></div>
+    <div class="modal-field"><label>Critical</label><input id="m-crit" value="20/×2"></div>
+    <div class="modal-field"><label>Damage Type (S/P/B)</label><input id="m-dtype"></div>
+    <div class="modal-field"><label>Range (blank=melee)</label><input id="m-range"></div>
+    <div class="modal-field"><label>Ammo (blank=N/A)</label><input id="m-ammo" type="number"></div>
+    <div class="modal-field"><label>Weight</label><input id="m-wt" type="number" value="0"></div>
+    <div class="modal-field"><label>Properties</label><input id="m-props" placeholder="Masterwork, etc."></div>
+    <div class="modal-field"><label>Equip As</label><select id="m-eqas"><option value="">Don't equip</option>
+      <option value="main">Main Hand</option><option value="off">Off Hand</option></select></div>`;
+  } else if(cat==='equip'){
+    f=`<div class="modal-field"><label>Name</label><input id="m-name"></div>
+    <div class="modal-field"><label>Slot</label><select id="m-slot">${SLOTS.map(s=>`<option value="${s}">${s}</option>`).join('')}<option value="">None (unslotted)</option></select></div>
+    <div class="modal-field"><label>AC Bonus (armor/shield only)</label><input id="m-bonus" type="number" value="0"></div>
+    <div class="modal-field"><label>Type (Light/Medium/Heavy/Shield)</label><input id="m-atype" value="Light"></div>
+    <div class="modal-field"><label>Max DEX</label><input id="m-maxdex" type="number" value="99"></div>
+    <div class="modal-field"><label>Armor Check Penalty</label><input id="m-acp" type="number" value="0"></div>
+    <div class="modal-field"><label>Spell Failure %</label><input id="m-sf" type="number" value="0"></div>
+    <div class="modal-field"><label>Weight</label><input id="m-wt" type="number" value="0"></div>
+    <div class="modal-field"><label>Properties</label><input id="m-props"></div>`;
+  } else {
+    f=`<div class="modal-field"><label>Name</label><input id="m-name"></div>
+    <div class="modal-field"><label>Weight</label><input id="m-wt" type="number" value="0"></div>
+    <div class="modal-field"><label>Notes</label><input id="m-props"></div>`;
+  }
+  showMod(`<div class="modal-title">Add ${cat==='weapons'?'Weapon':cat==='equip'?'Armor/Worn Item':'Equipment'}</div>${f}
+    <div class="modal-actions"><button class="modal-btn secondary" onclick="closeMod()">Cancel</button>
+    <button class="modal-btn primary" onclick="confirmGear('${cat}')">Add</button></div>`);
+}
+
+function confirmGear(cat){
+  const name=$('m-name')?.value;if(!name)return;
+  const id='g_'+Date.now(), wt=+$('m-wt')?.value||0, props=$('m-props')?.value||'';
+  if(cat==='weapons'){
+    const ammoV=$('m-ammo')?.value;
+    const w={id,name,weight:wt,properties:props,damage:$('m-dmg')?.value||'',
+      crit:$('m-crit')?.value||'20/×2',damageType:$('m-dtype')?.value||'',
+      range:$('m-range')?.value||'',ammo:ammoV!==''?+ammoV:null};
+    S.gear.weapons.push(w);
+    const eqAs=$('m-eqas')?.value;
+    if(eqAs==='main')S.equippedWeapons.main=id;
+    else if(eqAs==='off')S.equippedWeapons.off=id;
+  } else if(cat==='equip'){
+    const item={id,name,weight:wt,properties:props,
+      bonus:+$('m-bonus')?.value||0,armorType:$('m-atype')?.value||'',
+      maxDex:+$('m-maxdex')?.value,acp:+$('m-acp')?.value||0,
+      spellFail:+$('m-sf')?.value||0,slotType:$('m-slot')?.value||''};
+    S.gear.equip.push(item);
+    const slot=$('m-slot')?.value;
+    if(slot)S.slots[slot]=id;
+  } else {
+    S.gear.other.push({id,name,weight:wt,properties:props});
+  }
+  closeMod();renderGear();recalc();
+}
+
+function openAddCard(target){
+  showMod(`<div class="modal-title">Add Attack Card</div>
+    <div class="modal-field"><label>Name</label><input id="m-cn" placeholder="LONGBOW ATTACK"></div>
+    <div class="modal-field"><label>Body</label><textarea id="m-cb" style="height:120px" placeholder="To Hit:\n1d20 + BAB + DEX\n\nDamage:\n1d8 + STR"></textarea></div>
+    <div class="modal-actions"><button class="modal-btn secondary" onclick="closeMod()">Cancel</button>
+    <button class="modal-btn primary" onclick="confirmCard('${target}')">Add</button></div>`);
+}
+function confirmCard(t){const n=$('m-cn')?.value,b=$('m-cb')?.value;if(!n)return;
+  const c={name:n,body:b||''};if(t==='companion')S.compAtkCards.push(c);else S.atkCards.push(c);
+  closeMod();renderAtkCards();save()}
+
+function openAddFeat(cat){
+  showMod(`<div class="modal-title">Add ${cat==='companion'?'Companion Ability':'Feat / Feature'}</div>
+    <div class="modal-field"><label>Name</label><input id="m-fn"></div>
+    <div class="modal-field"><label>Description</label><textarea id="m-fd"></textarea></div>
+    <div class="modal-actions"><button class="modal-btn secondary" onclick="closeMod()">Cancel</button>
+    <button class="modal-btn primary" onclick="confirmFeat('${cat}')">Add</button></div>`);
+}
+function confirmFeat(cat){const n=$('m-fn')?.value;if(!n)return;
+  S.feats[cat].push({name:n,desc:$('m-fd')?.value||''});closeMod();renderFeats();save()}
+
+function openAddRes(){
+  showMod(`<div class="modal-title">Add Daily Resource</div>
+    <div class="modal-field"><label>Name</label><input id="m-rn" placeholder="Ki Points, Channel Energy"></div>
+    <div class="modal-field"><label>Uses Per Day</label><input id="m-rm" type="number" value="3"></div>
+    <div class="modal-actions"><button class="modal-btn secondary" onclick="closeMod()">Cancel</button>
+    <button class="modal-btn primary" onclick="confirmRes()">Add</button></div>`);
+}
+function confirmRes(){const n=$('m-rn')?.value,m=+$('m-rm')?.value||1;if(!n)return;
+  S.resources.push({name:n,max:m,used:0});closeMod();renderPowers();save()}
+
+function openAddSL(){
+  showMod(`<div class="modal-title">Add Spell Level</div>
+    <div class="modal-field"><label>Level (0=orisons)</label><input id="m-sl" type="number" value="1" min="0" max="9"></div>
+    <div class="modal-field"><label>Slots Per Day</label><input id="m-ss" type="number" value="3"></div>
+    <div class="modal-field"><label>Spells Known</label><textarea id="m-sp" placeholder="Shield of Faith, Bless"></textarea></div>
+    <div class="modal-actions"><button class="modal-btn secondary" onclick="closeMod()">Cancel</button>
+    <button class="modal-btn primary" onclick="confirmSL()">Add</button></div>`);
+}
+function confirmSL(){const lv=+$('m-sl')?.value||0,sl=+$('m-ss')?.value||1,sp=$('m-sp')?.value||'';
+  S.spellLevels.push({level:lv,slots:sl,used:0,spells:sp});
+  S.spellLevels.sort((a,b)=>a.level-b.level);closeMod();renderPowers();save()}
+
+// SETTINGS
+
+// ===== THEME LIBRARY (shared across all party sheets) =====
+const THEMES={
+  wyldwood:{name:'Wyldwood',v:{'--bg':'#141a16','--card':'#1b2320','--input':'#242e28','--accent':'#6aad7b','--accent-dim':'#3d7a50','--accent-glow':'rgba(106,173,123,.15)','--text':'#dce8e0','--text2':'#8ca898','--dim':'#566d5e','--border':'#2e3a33','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  nightshade:{name:'Nightshade',v:{'--bg':'#1a1220','--card':'#221a30','--input':'#2e223e','--accent':'#9b59b6','--accent-dim':'#7d3c98','--accent-glow':'rgba(155,89,182,.15)','--text':'#e8e0d0','--text2':'#a89e8c','--dim':'#6d6456','--border':'#3a352e','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  stormglass:{name:'Stormglass',v:{'--bg':'#1a1714','--card':'#23201b','--input':'#2e2a24','--accent':'#6b8eb5','--accent-dim':'#3d5f82','--accent-glow':'rgba(107,142,181,.15)','--text':'#e8e0d0','--text2':'#a89e8c','--dim':'#6d6456','--border':'#3a352e','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  duskwatch:{name:'Duskwatch',v:{'--bg':'#121820','--card':'#1a2230','--input':'#222e3e','--accent':'#5b8ab4','--accent-dim':'#3d6e94','--accent-glow':'rgba(91,138,180,.15)','--text':'#dce4ec','--text2':'#8ca4b8','--dim':'#566d82','--border':'#2e3a4a','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  emberfall:{name:'Emberfall',v:{'--bg':'#1a1714','--card':'#23201b','--input':'#2e2a24','--accent':'#c44040','--accent-dim':'#8a2c2c','--accent-glow':'rgba(196,64,64,.15)','--text':'#e8e0d0','--text2':'#a89e8c','--dim':'#6d6456','--border':'#3a352e','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  amberwild:{name:'Amberwild',v:{'--bg':'#1a1714','--card':'#23201b','--input':'#2e2a24','--accent':'#d4883a','--accent-dim':'#8a5a25','--accent-glow':'rgba(212,136,58,.15)','--text':'#e8e0d0','--text2':'#a89e8c','--dim':'#6d6456','--border':'#3a352e','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  cinder:{name:'Cinder',v:{'--bg':'#1a1714','--card':'#23201b','--input':'#2e2a24','--accent':'#b0613a','--accent-dim':'#7a4026','--accent-glow':'rgba(176,97,58,.15)','--text':'#e8e0d0','--text2':'#a89e8c','--dim':'#6d6456','--border':'#3a352e','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  parchment:{name:'Parchment (light)',v:{'--bg':'#e8dfc8','--card':'#f2ead4','--input':'#ddd2b6','--accent':'#8a5a2b','--accent-dim':'#6b4520','--accent-glow':'rgba(138,90,43,.18)','--text':'#2b2418','--text2':'#5a4f3c','--dim':'#8a7c64','--border':'#c5b794','--red':'#a83232','--green':'#4a6e32','--blue':'#3a5f8a'}},
+  slate:{name:'Slate',v:{'--bg':'#191b1e','--card':'#232629','--input':'#2d3135','--accent':'#8090a0','--accent-dim':'#555f6b','--accent-glow':'rgba(128,144,160,.15)','--text':'#e2e4e7','--text2':'#99a0a8','--dim':'#5e646c','--border':'#33373c','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  royal:{name:'Royal',v:{'--bg':'#121726','--card':'#1a2138','--input':'#232c48','--accent':'#c8a44c','--accent-dim':'#8a7030','--accent-glow':'rgba(200,164,76,.15)','--text':'#e6e2d2','--text2':'#a39e88','--dim':'#6d6a58','--border':'#2e3a52','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  tidewater:{name:'Tidewater',v:{'--bg':'#0f1c1e','--card':'#172a2c','--input':'#1f383a','--accent':'#3fb0a0','--accent-dim':'#2a7268','--accent-glow':'rgba(63,176,160,.15)','--text':'#dceae8','--text2':'#8cb0aa','--dim':'#557068','--border':'#2a3e3e','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  bramblerose:{name:'Bramblerose',v:{'--bg':'#1e141a','--card':'#2a1d26','--input':'#382630','--accent':'#c47a9a','--accent-dim':'#8a5068','--accent-glow':'rgba(196,122,154,.15)','--text':'#ecdce4','--text2':'#b08ca0','--dim':'#6d5660','--border':'#3a2e34','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  oxblood:{name:'Oxblood',v:{'--bg':'#170d11','--card':'#241620','--input':'#321e28','--accent':'#a83d52','--accent-dim':'#6e2838','--accent-glow':'rgba(168,61,82,.15)','--text':'#ecdce0','--text2':'#b08c98','--dim':'#6d565e','--border':'#38282e','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  vesper:{name:'Vesper',v:{'--bg':'#12121f','--card':'#1b1b2e','--input':'#25253e','--accent':'#6c5cc4','--accent-dim':'#45397e','--accent-glow':'rgba(108,92,196,.15)','--text':'#e0dcec','--text2':'#9a94b8','--dim':'#5e5680','--border':'#2e2c44','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  obsidian:{name:'Obsidian',v:{'--bg':'#0c0c0e','--card':'#161618','--input':'#202024','--accent':'#b8b8c4','--accent-dim':'#76767e','--accent-glow':'rgba(184,184,196,.12)','--text':'#f0f0f2','--text2':'#a0a0a8','--dim':'#5e5e64','--border':'#2c2c30','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  bone:{name:'Bone (light)',v:{'--bg':'#e4e6e3','--card':'#eef0ec','--input':'#d6d9d3','--accent':'#4a6276','--accent-dim':'#344656','--accent-glow':'rgba(74,98,118,.15)','--text':'#20242a','--text2':'#4e5660','--dim':'#828a92','--border':'#c2c6c0','--red':'#a83232','--green':'#4a6e3a','--blue':'#3a5f8a'}}
+};
+function _curTheme(){try{return localStorage.getItem(STORAGE_KEY+'-theme')||DEFAULT_THEME}catch(e){return DEFAULT_THEME}}
+function applyTheme(key){
+  const t=THEMES[key]||THEMES[DEFAULT_THEME];
+  const r=document.documentElement;
+  for(const p in t.v){r.style.setProperty(p,t.v[p]);}
+  try{localStorage.setItem(STORAGE_KEY+'-theme',key);}catch(e){}
+}
+function openThemePicker(){
+  const cur=_curTheme();
+  let html='<div class="modal-title">Theme</div><div style="color:var(--text2);font-size:.82rem;margin-bottom:12px">Pick a look for your sheet. Saves automatically and stays put across sessions.</div><div style="display:flex;flex-direction:column;gap:8px">';
+  for(const key in THEMES){const t=THEMES[key],v=t.v,sel=key===cur;
+    html+=`<div onclick="applyTheme('${key}');openThemePicker()" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:8px;cursor:pointer;border:2px solid ${sel?v['--accent']:'transparent'};background:${v['--card']};transition:border-color .15s">
+      <div style="display:flex;gap:4px;flex-shrink:0">
+        <span style="width:22px;height:22px;border-radius:5px;background:${v['--bg']};border:1px solid ${v['--border']}"></span>
+        <span style="width:22px;height:22px;border-radius:5px;background:${v['--accent']}"></span>
+        <span style="width:22px;height:22px;border-radius:5px;background:${v['--input']}"></span>
+      </div>
+      <span style="color:${v['--text']};font-family:'Cinzel',serif;font-size:1rem;letter-spacing:.5px;flex:1">${t.name}</span>
+      ${sel?`<span style="color:${v['--accent']};font-size:1.1rem">\u2713</span>`:''}
+    </div>`;
+  }
+  html+='</div><div class="modal-actions"><button class="modal-btn primary" onclick="closeMod()">Done</button></div>';
+  showMod(html);
+}
+
+function openSettings(){
+  showMod(`<div class="modal-title">Edit Character</div>
+    <div class="modal-field"><label>Name</label><input id="m-sn" value="${S.name}"></div>
+    <div class="modal-field"><label>Race</label><input id="m-sr" value="${S.race}"></div>
+    <div class="modal-field"><label>Class</label><input id="m-sc" value="${S.cls}"></div>
+    <div class="modal-field"><label>Level</label><input id="m-sl2" type="number" value="${S.level}"></div>
+    <div class="modal-field"><label>Deity</label><input id="m-sd" value="${S.deity}"></div>
+    <div class="modal-field"><label>Speed</label><input id="m-ss2" type="number" value="${S.speed}"></div>
+    <div class="modal-field"><label>Max HP</label><input id="m-sh" type="number" value="${S.maxHp}"></div>
+    <div class="modal-field"><label>Languages</label><input id="m-slg" value="${S.languages}"></div>
+    <div class="modal-field"><label>Senses</label><input id="m-sse" value="${S.senses}"></div>
+    <div class="modal-actions"><button class="modal-btn secondary" onclick="closeMod()">Cancel</button>
+    <button class="modal-btn primary" onclick="confirmSettings()">Save</button></div>
+    <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
+    <button class="modal-btn secondary" style="color:var(--red);border-color:var(--red)" onclick="if(confirm('Reset all data?')){localStorage.removeItem(STORAGE_KEY);location.reload()}">Reset All Data</button></div>`);
+}
+function confirmSettings(){
+  S.name=$('m-sn').value;S.race=$('m-sr').value;S.cls=$('m-sc').value;
+  S.level=+$('m-sl2').value||1;S.deity=$('m-sd').value;S.speed=+$('m-ss2').value||30;
+  S.maxHp=+$('m-sh').value||1;
+  S.languages=$('m-slg').value;S.senses=$('m-sse').value;
+  closeMod();renderApp();
+}
+
+// SETUP
+function initSetup(){
+  const g=$('setupAbilities');g.innerHTML='';
+  ABILS.forEach(a=>{g.innerHTML+=`<div class="setup-ability-item">
+    <span class="abl-name">${a}</span>
+    <input id="sa-${a}" type="number" value="10" oninput="$('sam-${a}').textContent='('+ms(mod(+this.value||10))+')'">
+    <span class="abl-mod" id="sam-${a}">(+0)</span></div>`});
+}
+
+function completeSetup(){
+  S.name=$('s-name').value||'Adventurer';S.race=$('s-race').value||'Human';
+  S.cls=$('s-class').value||'Fighter';S.level=+$('s-level').value||1;
+  S.deity=$('s-deity').value||'';S.speed=+$('s-speed').value||30;
+  S.size=$('s-size').value||'M';S.maxHp=+$('s-maxhp').value||20;S.hp=S.maxHp;
+  S.bab=+$('s-bab').value||0;
+  S.saves.fort.base=+$('s-fort-base').value||0;
+  S.saves.ref.base=+$('s-ref-base').value||0;
+  S.saves.will.base=+$('s-will-base').value||0;
+  S.languages=$('s-languages').value||'Common';
+  S.senses=$('s-senses').value||'';
+  S.hasComp=$('s-companion').classList.contains('on');
+  S.hasPow=$('s-powers').classList.contains('on');
+  ABILS.forEach(a=>{S.abilities[a]=+$('sa-'+a).value||10});
+  $('setupScreen').classList.add('hidden');
+  $('appContainer').style.display='flex';
+  save();renderApp();
+}
+
+// INIT
+window.addEventListener('DOMContentLoaded',()=>{
+  applyTheme(_curTheme());
+  if(loadState()){
+    renderApp();
+  } else if(CHAR_ID !== 'template') {
+    // Pre-built character: skip setup, render with baked-in defaults
+    renderApp();
+  } else {
+    // Template mode: show setup
+    $('setupScreen').classList.remove('hidden');
+    $('appContainer').style.display='none';
+    initSetup();
+  }
+});
+</script>
+</body>
+</html>

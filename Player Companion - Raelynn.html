@@ -1,0 +1,2011 @@
+<!--
+  ================================================================
+  PATHFINDER 1E PLAYER COMPANION — MASTER TEMPLATE
+  ================================================================
+  
+  HOW TO CUSTOMIZE FOR A NEW CHARACTER:
+  
+  1. Change CHAR_ID constant to character name (lowercase, no spaces, e.g. 'cavik')
+  2. Change <title> to "[Name]'s Companion"
+  3. Replace CHAR_IMG with base64 portrait — ALWAYS DO THIS, DO NOT SKIP
+     - Resize to ~500-600px wide, JPEG quality 60% BEFORE encoding
+     - Use: python3 -c "from PIL import Image; import base64,io; img=Image.open('file.jpg'); img.thumbnail((600,900)); buf=io.BytesIO(); img.save(buf,'JPEG',quality=60); print('data:image/jpeg;base64,'+base64.b64encode(buf.getvalue()).decode())"
+  4. Hardcode ALL character data into the let S={} block (do NOT rely on UI entry):
+     - Identity: name, race, cls, level, deity, speed, size, languages, senses
+     - Abilities: base scores in abilities{}, leave abilTemp{} at 0
+     - Combat: hp, maxHp, bab, saves (each has base/magic/misc/temp), initMisc
+     - AC: armor/shield auto-set from equipped gear; set natural/deflect/misc manually
+     - Gear weapons: [{id:'w1', name, damage, crit, damageType, weight, range, ammo, properties}]
+     - Gear equip: [{id:'e1', name, bonus, armorType, maxDex, acp, spellFail, weight, slotType}]
+     - Gear other: [{id:'o1', name, weight, properties}]
+     - Slots: map item ids to body slots {Armor:'e1', Neck:'e2', etc.}
+       Valid slots: Armor, Shield, Head, Headband, Eyes, Neck, Shoulders, Chest, Body, Belt, Wrists, Hands, Ring 1, Ring 2, Feet
+     - equippedWeapons: {main:'w1', off:null}
+     - Skills: key='sk-SkillName' (no spaces), value={ranks, misc, cs:true/false}
+       misc = racial/item bonuses only (class skill +3 is auto-calculated)
+     - Feats: {always:[], combat:[], special:[], companion:[]}
+       Each: {name:'', desc:''} — write descriptions for NEW players, casual tone
+     - Attack cards: [{name:'CARD TITLE', body:'HTML-formatted attack description'}]
+       Write in GM's casual voice. Include attack formula, damage, conditions, tips.
+     - Resources: [{name:'Ki Pool', max:3, used:0}] — daily-use abilities
+     - Spell levels: [{level:0, slots:4, used:0, spells:'comma-separated list'}]
+     - Companion: populate comp{} if hasComp:true, use compAtkCards[] for companion attacks
+  5. Set hasComp:true / hasPow:true as needed
+  6. Theme accent colors in CSS :root (--accent, --accent-dim, --accent-glow)
+     Gold=#c9a84c, Red=#c44040, Purple=#8a5cb8, Green=#5a9a5a, Blue=#5a8ab4, Teal=#4aada8
+  7. For divine casters (cleric/druid): change 'Cantrips (Lvl 0)' label to 'Orisons (Lvl 0)' in renderPowers()
+  
+  RULES ENCODED IN recalc():
+  - Modifier = floor((score + temp - 10) / 2)
+  - Melee attack = BAB + STR mod + size mod
+  - Ranged attack = BAB + DEX mod + size mod
+  - CMB = BAB + STR mod - size mod (MINUS size for CMB)
+  - CMD = 10 + BAB + STR + DEX - size mod
+  - AC = 10 + armor + shield + DEX(capped) + size + natural + deflect + misc + worn item bonuses
+  - Damage: main=STR, two-handed=floor(STR*1.5), off-hand=floor(STR*0.5)
+  - Size mods: T=+2, S=+1, M=0, L=-1
+  ================================================================
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Raelynn's Companion</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Crimson+Text:ital,wght@0,400;0,600;0,700;1,400&family=MedievalSharp&display=swap');
+:root{
+  --bg:#1a1714;--card:#23201b;--input:#2e2a24;--accent:#d4883a;--accent-dim:#8a5a25;
+  --accent-glow:rgba(212,136,58,.15);--text:#e8e0d0;--text2:#a89e8c;--dim:#6d6456;
+  --border:#3a352e;--red:#c44040;--green:#5a9a5a;--blue:#5a8ab4;
+  --tab-h:60px;--hdr-h:44px;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{background:var(--bg);color:var(--text);font-family:'Crimson Text',Georgia,serif;
+  height:100vh;width:100vw;overflow:hidden;user-select:none;font-size:16px}
+
+/* TIP ICON */
+.tip-btn{display:inline-flex;align-items:center;justify-content:center;
+  width:16px;height:16px;border-radius:50%;background:var(--input);
+  border:1px solid var(--border);color:var(--dim);font-size:9px;
+  font-family:'Cinzel',serif;cursor:pointer;flex-shrink:0;margin-left:4px;
+  vertical-align:middle;line-height:1}
+.tip-btn:active{background:var(--accent-glow);border-color:var(--accent);color:var(--accent)}
+
+/* SETUP */
+.setup-overlay{position:fixed;inset:0;z-index:1000;background:var(--bg);
+  display:flex;flex-direction:column;overflow-y:auto;transition:opacity .4s}
+.setup-overlay.hidden{opacity:0;pointer-events:none}
+.setup-inner{max-width:400px;width:90%;margin:0 auto;padding:40px 0 100px}
+.setup-title{font-family:'Cinzel',serif;font-size:1.6rem;color:var(--accent);text-align:center;margin-bottom:8px}
+.setup-subtitle{text-align:center;color:var(--text2);font-size:.95rem;margin-bottom:30px}
+.setup-section{margin-bottom:24px}
+.setup-section h3{font-family:'Cinzel',serif;font-size:.85rem;color:var(--accent);
+  letter-spacing:1px;text-transform:uppercase;margin-bottom:12px;
+  border-bottom:1px solid var(--border);padding-bottom:6px}
+.setup-row{display:flex;gap:10px;margin-bottom:10px}
+.setup-field{flex:1;display:flex;flex-direction:column}
+.setup-field label{font-size:.75rem;color:var(--text2);margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px}
+.setup-field input,.setup-field select{background:var(--input);border:1px solid var(--border);
+  color:var(--text);padding:10px;border-radius:4px;font-family:'Crimson Text',serif;font-size:1rem}
+.setup-field input:focus,.setup-field select:focus{outline:none;border-color:var(--accent)}
+.setup-field select{appearance:none}
+.setup-ability-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.setup-ability-item{display:flex;align-items:center;gap:8px;background:var(--input);
+  border:1px solid var(--border);border-radius:4px;padding:8px 10px}
+.setup-ability-item .abl-name{font-family:'Cinzel',serif;font-size:.7rem;color:var(--accent);width:32px;letter-spacing:1px}
+.setup-ability-item input{width:50px;text-align:center;background:transparent;border:1px solid var(--border);
+  color:var(--text);border-radius:3px;padding:4px;font-size:1rem;font-family:'Crimson Text',serif}
+.setup-ability-item .abl-mod{color:var(--text2);font-size:.9rem;min-width:28px;text-align:center}
+.setup-toggle-row{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)}
+.setup-toggle-row span{font-size:.95rem}
+.toggle-switch{width:44px;height:24px;background:var(--input);border:1px solid var(--border);
+  border-radius:12px;position:relative;cursor:pointer;transition:background .2s}
+.toggle-switch.on{background:var(--accent-dim);border-color:var(--accent)}
+.toggle-switch::after{content:'';position:absolute;width:18px;height:18px;border-radius:50%;
+  background:var(--text2);top:2px;left:2px;transition:transform .2s,background .2s}
+.toggle-switch.on::after{transform:translateX(20px);background:var(--accent)}
+.setup-btn{display:block;width:100%;padding:14px;background:var(--accent);color:var(--bg);
+  border:none;border-radius:4px;font-family:'Cinzel',serif;font-size:1rem;font-weight:700;
+  cursor:pointer;margin-top:30px;letter-spacing:1px}
+.setup-btn:active{opacity:.8}
+
+/* APP */
+.app-container{display:flex;flex-direction:column;height:100vh}
+.app-header{height:var(--hdr-h);background:var(--card);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;padding:0 16px;flex-shrink:0;position:relative}
+.header-name{font-family:'Cinzel',serif;font-size:.95rem;color:var(--accent);letter-spacing:1px;margin-left:46px}
+.header-info{font-size:.75rem;color:var(--text2);margin-left:8px}
+.header-edit-btn{position:absolute;right:12px;background:none;border:none;color:var(--dim);font-size:1.1rem;cursor:pointer;padding:4px 8px}
+.tab-content-area{flex:1;overflow-y:auto;overflow-x:hidden;padding:12px 14px 20px;
+  -webkit-overflow-scrolling:touch;position:relative;z-index:1}
+.tab-page{display:none}.tab-page.active{display:block}
+.tab-bar{height:var(--tab-h);background:var(--card);border-top:1px solid var(--border);
+  display:flex;overflow-x:auto;flex-shrink:0;-webkit-overflow-scrolling:touch;
+  scrollbar-width:none;padding-bottom:env(safe-area-inset-bottom,0)}
+.tab-bar::-webkit-scrollbar{display:none}
+.tab-item{flex:0 0 auto;min-width:64px;padding:6px 12px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;color:var(--dim);font-size:.58rem;
+  font-family:'Cinzel',serif;letter-spacing:.5px;text-transform:uppercase;cursor:pointer;
+  transition:color .2s;border:none;background:none;white-space:nowrap}
+.tab-item.active{color:var(--accent)}
+.tab-icon{font-size:1.2rem;margin-bottom:2px}
+.char-bg{position:fixed;top:var(--hdr-h);left:0;right:0;bottom:var(--tab-h);z-index:0;
+  pointer-events:none;opacity:.06;background-size:cover;background-position:center top;background-repeat:no-repeat}
+
+/* SHARED */
+.section-title{font-family:'Cinzel',serif;font-size:.8rem;color:var(--accent);letter-spacing:1.5px;
+  text-transform:uppercase;margin:16px 0 10px;border-bottom:1px solid var(--border);padding-bottom:5px}
+.section-title:first-child{margin-top:4px}
+.stat-card{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:8px}
+.inline-stat{display:flex;justify-content:space-between;align-items:center;padding:7px 0;
+  border-bottom:1px solid rgba(58,53,46,.5)}
+.inline-stat:last-child{border-bottom:none}
+.inline-stat .label{font-size:.85rem;color:var(--text2);display:flex;align-items:center;gap:2px}
+.inline-stat .value{font-size:1rem;font-weight:600;color:var(--text);min-width:40px;text-align:center}
+.ev{background:var(--input);border:1px solid var(--border);border-radius:3px;padding:3px 8px;
+  color:var(--text);font-family:'Crimson Text',serif;font-size:1rem;width:55px;text-align:center;font-weight:600}
+.ev:focus{outline:none;border-color:var(--accent)}
+.cv{color:var(--accent);font-weight:700}
+
+/* HP */
+.hp-tracker{display:flex;align-items:center;justify-content:center;gap:12px;padding:12px;
+  background:var(--card);border:1px solid var(--border);border-radius:8px;margin-bottom:10px}
+.hp-btn{width:40px;height:40px;border-radius:50%;border:2px solid var(--border);background:var(--input);
+  color:var(--text);font-size:1.4rem;display:flex;align-items:center;justify-content:center;
+  cursor:pointer;font-family:'Crimson Text',serif}
+.hp-btn.minus{border-color:var(--red);color:var(--red)}
+.hp-btn.plus{border-color:var(--green);color:var(--green)}
+.hp-btn:active{opacity:.6}
+.hp-display{text-align:center}
+.hp-display .hp-label{font-family:'Cinzel',serif;font-size:.65rem;color:var(--dim);letter-spacing:1px;text-transform:uppercase}
+.hp-display .hp-numbers{font-size:1.8rem;font-weight:700}
+.hp-current{color:var(--green)}.hp-slash{color:var(--dim);margin:0 2px}.hp-max{color:var(--text2)}
+
+/* ABILITY GRID */
+.ability-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px}
+.ability-box{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px;
+  display:flex;align-items:center;gap:6px}
+.ability-box .ab-label{font-family:'Cinzel',serif;font-size:.65rem;color:var(--accent);letter-spacing:1px;width:30px}
+.ability-box .ab-score{width:38px}
+.ability-box .ab-mod{font-size:1.1rem;font-weight:700;color:var(--text);min-width:30px;text-align:center}
+
+/* WIELDING SELECTOR */
+.wield-row{display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap}
+.wield-btn{padding:6px 10px;border-radius:4px;border:1px solid var(--border);background:var(--input);
+  color:var(--dim);font-family:'Cinzel',serif;font-size:.65rem;cursor:pointer;text-transform:uppercase;letter-spacing:.5px}
+.wield-btn.active{border-color:var(--accent);color:var(--accent);background:var(--accent-glow)}
+
+/* ATTACK CARDS */
+.attack-card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:10px;cursor:pointer}
+.attack-card-header{font-family:'Cinzel',serif;font-size:.9rem;color:var(--accent);margin-bottom:8px;
+  border-bottom:1px solid var(--border);padding-bottom:6px}
+.attack-card-body{font-size:.9rem;line-height:1.5;color:var(--text2)}
+.attack-card-body strong{color:var(--text)}
+
+/* GEAR */
+.gear-item{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(58,53,46,.4)}
+.gear-item-name{flex:1;font-size:.9rem}
+.gear-item-weight{font-size:.8rem;color:var(--dim);min-width:40px;text-align:right}
+.gear-item-remove{background:none;border:none;color:var(--red);font-size:1rem;cursor:pointer;padding:2px 6px;opacity:.5}
+.gear-item-remove:active{opacity:1}
+.add-btn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:10px;
+  background:var(--input);border:1px dashed var(--border);border-radius:6px;color:var(--dim);
+  font-family:'Crimson Text',serif;font-size:.9rem;cursor:pointer;margin-top:8px}
+.add-btn:active{border-color:var(--accent);color:var(--accent)}
+
+/* EQUIP SLOTS */
+.slot-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px}
+.slot-box{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 10px;
+  cursor:pointer;min-height:44px}
+.slot-box:active{border-color:var(--accent)}
+.slot-label{font-family:'Cinzel',serif;font-size:.6rem;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px}
+.slot-item{font-size:.8rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.slot-item.empty{color:var(--dim);font-style:italic;font-size:.75rem}
+.slot-box.filled .slot-item{color:var(--text)}
+
+/* SKILLS */
+.skill-row{display:flex;align-items:center;gap:4px;padding:5px 0;border-bottom:1px solid rgba(58,53,46,.3);font-size:.82rem}
+.skill-cs{min-width:22px;height:18px;border-radius:2px;border:1px solid var(--border);background:var(--input);
+  flex-shrink:0;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  font-size:.5rem;color:var(--dim);font-family:'Cinzel',serif;letter-spacing:.5px}
+.skill-cs.checked{background:var(--accent-glow);border-color:var(--accent);color:var(--accent)}
+.skill-name{flex:1;color:var(--text2)}
+.skill-total{min-width:28px;text-align:center;font-weight:700;color:var(--accent)}
+.skill-header{display:flex;align-items:center;gap:4px;padding:4px 0;font-size:.6rem;color:var(--dim);
+  text-transform:uppercase;letter-spacing:.5px;font-family:'Cinzel',serif}
+
+/* FEATS */
+.feat-section{margin-bottom:8px}
+.feat-section-header{display:flex;align-items:center;gap:8px;padding:8px 0;cursor:pointer}
+.feat-section-header .chevron{color:var(--accent);font-size:.8rem;transition:transform .2s}
+.feat-section-header .chevron.open{transform:rotate(90deg)}
+.feat-section-header .section-name{font-family:'Cinzel',serif;font-size:.75rem;color:var(--text2);
+  letter-spacing:1px;text-transform:uppercase}
+.feat-list{overflow:hidden}.feat-list.collapsed{max-height:0}
+.feat-item{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:6px}
+.feat-item-name{font-weight:700;color:var(--text);margin-bottom:3px}
+.feat-item-desc{font-size:.85rem;color:var(--text2);line-height:1.4}
+
+/* POWERS */
+.resource-tracker{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:8px}
+.resource-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.resource-name{font-weight:700;font-size:.9rem}
+.resource-pips{display:flex;gap:4px;flex-wrap:wrap}
+.resource-pip{width:24px;height:24px;border-radius:4px;border:1px solid var(--accent-dim);
+  background:var(--input);cursor:pointer;transition:background .15s}
+.resource-pip.used{background:var(--accent-dim);opacity:.4}
+.long-rest-btn{display:block;width:100%;padding:12px;background:var(--input);border:1px solid var(--accent-dim);
+  color:var(--accent);border-radius:6px;font-family:'Cinzel',serif;font-size:.85rem;
+  cursor:pointer;text-transform:uppercase;letter-spacing:1px;margin-top:16px}
+.long-rest-btn:active{background:var(--accent-glow)}
+
+/* DICE */
+.dice-fab{position:fixed;bottom:calc(var(--tab-h) + env(safe-area-inset-bottom,0px) + 14px);
+  right:14px;z-index:500;width:50px;height:50px;border-radius:50%;background:var(--accent);
+  color:var(--bg);border:none;font-size:1.2rem;cursor:pointer;
+  box-shadow:0 4px 16px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;
+  font-family:'MedievalSharp',serif}
+.dice-fab:active{transform:scale(.9)}
+.dice-overlay{position:fixed;inset:0;z-index:600;background:rgba(0,0,0,.7);
+  display:flex;align-items:flex-end;justify-content:center;
+  opacity:0;pointer-events:none;transition:opacity .25s}
+.dice-overlay.open{opacity:1;pointer-events:auto}
+.dice-panel{width:100%;max-width:440px;background:var(--card);border-top:2px solid var(--accent);
+  border-radius:16px 16px 0 0;padding:20px 16px;
+  padding-bottom:calc(20px + env(safe-area-inset-bottom,0px));
+  transform:translateY(100%);transition:transform .3s ease}
+.dice-overlay.open .dice-panel{transform:translateY(0)}
+.dice-result-area{text-align:center;min-height:70px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;margin-bottom:16px}
+.dice-result-number{font-family:'Cinzel',serif;font-size:3rem;font-weight:900;color:var(--accent);transition:transform .2s}
+.dice-result-number.rolling{animation:diceRoll .1s ease infinite}
+@keyframes diceRoll{0%{transform:rotate(-8deg) scale(1.1)}25%{transform:rotate(6deg) scale(.95)}
+  50%{transform:rotate(-4deg) scale(1.05)}75%{transform:rotate(8deg) scale(.9)}100%{transform:rotate(-6deg) scale(1.1)}}
+.dice-result-breakdown{font-size:.8rem;color:var(--dim);margin-top:2px}
+.dice-buttons{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+.dice-btn{padding:12px 4px;border-radius:6px;background:var(--input);border:1px solid var(--border);
+  color:var(--text);font-family:'Cinzel',serif;font-size:.85rem;cursor:pointer;
+  display:flex;align-items:center;justify-content:center}
+.dice-btn:active{background:var(--accent-glow);border-color:var(--accent)}
+.dice-count-row{display:flex;gap:8px;align-items:center;margin-bottom:12px}
+.dice-count-btn{width:32px;height:32px;border-radius:4px;background:var(--input);border:1px solid var(--border);
+  color:var(--text);font-size:1.1rem;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.dice-count-btn:active{border-color:var(--accent)}
+.dice-count-display{font-size:1.1rem;min-width:30px;text-align:center;color:var(--accent)}
+.dice-history{max-height:80px;overflow-y:auto;margin-top:8px;border-top:1px solid var(--border);padding-top:8px}
+.dice-history-item{font-size:.75rem;color:var(--dim);padding:2px 0}
+
+/* TOOLTIP */
+.tooltip-overlay{position:fixed;inset:0;z-index:800;background:rgba(0,0,0,.5);
+  display:flex;align-items:center;justify-content:center;padding:30px;
+  opacity:0;pointer-events:none;transition:opacity .2s}
+.tooltip-overlay.show{opacity:1;pointer-events:auto}
+.tooltip-box{background:var(--card);border:1px solid var(--accent);border-radius:8px;padding:16px 18px;
+  max-width:320px;width:100%;box-shadow:0 8px 32px rgba(0,0,0,.6)}
+.tooltip-title{font-family:'Cinzel',serif;font-size:.85rem;color:var(--accent);margin-bottom:6px}
+.tooltip-text{font-size:.9rem;color:var(--text2);line-height:1.5}
+
+/* MODAL */
+.modal-overlay{position:fixed;inset:0;z-index:700;background:rgba(0,0,0,.6);
+  display:flex;align-items:center;justify-content:center;padding:20px;
+  opacity:0;pointer-events:none;transition:opacity .2s}
+.modal-overlay.show{opacity:1;pointer-events:auto}
+.modal-box{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:20px;
+  max-width:360px;width:100%;max-height:85vh;overflow-y:auto}
+.modal-title{font-family:'Cinzel',serif;font-size:.9rem;color:var(--accent);margin-bottom:14px}
+.modal-field{margin-bottom:10px}
+.modal-field label{display:block;font-size:.75rem;color:var(--text2);margin-bottom:3px;text-transform:uppercase}
+.modal-field input,.modal-field select,.modal-field textarea{width:100%;background:var(--input);
+  border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:4px;
+  font-family:'Crimson Text',serif;font-size:1rem}
+.modal-field textarea{height:60px;resize:vertical}
+.modal-field input:focus,.modal-field textarea:focus{outline:none;border-color:var(--accent)}
+.modal-actions{display:flex;gap:8px;margin-top:14px}
+.modal-btn{flex:1;padding:10px;border-radius:4px;font-family:'Cinzel',serif;font-size:.85rem;cursor:pointer;text-align:center}
+.modal-btn.primary{background:var(--accent);color:var(--bg);border:none;font-weight:700}
+.modal-btn.secondary{background:transparent;color:var(--text2);border:1px solid var(--border)}
+.modal-btn:active{opacity:.7}
+
+/* GOLD */
+.gold-row{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--card);
+  border:1px solid var(--border);border-radius:6px;margin-bottom:10px}
+.gold-label{font-family:'Cinzel',serif;font-size:.8rem;color:var(--accent);letter-spacing:1px}
+.gold-input{width:90px}
+
+/* SUB TABS */
+.sub-tabs{display:flex;gap:0;margin-bottom:12px;border-bottom:1px solid var(--border)}
+.sub-tab{padding:8px 14px;font-family:'Cinzel',serif;font-size:.7rem;color:var(--dim);
+  text-transform:uppercase;letter-spacing:.5px;cursor:pointer;border-bottom:2px solid transparent;
+  background:none;border-top:none;border-left:none;border-right:none}
+.sub-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+/* CHARACTER BANNER */
+.char-banner{position:relative;width:calc(100% + 28px);margin:-12px -14px 12px;
+  height:280px;overflow:hidden;border-bottom:2px solid var(--accent-dim)}
+.char-banner-img{width:100%;height:100%;object-fit:cover;object-position:center 12%;
+  filter:brightness(.6);display:block}
+.char-banner-gradient{position:absolute;inset:0;cursor:pointer;
+  background:linear-gradient(to top,var(--bg) 0%,transparent 50%,rgba(26,23,20,.3) 100%)}
+.char-banner-info{position:absolute;bottom:12px;left:16px;right:16px;pointer-events:none}
+.char-banner-name{font-family:'Cinzel',serif;font-size:1.4rem;font-weight:900;
+  color:var(--accent);text-shadow:0 2px 8px rgba(0,0,0,.8);line-height:1.2}
+.char-banner-sub{font-size:.85rem;color:var(--text2);text-shadow:0 1px 4px rgba(0,0,0,.8);margin-top:2px}
+.char-banner-placeholder{width:100%;height:100%;
+  background:linear-gradient(135deg,#1a1714 0%,#2e2a24 50%,#1a1714 100%);
+  display:flex;align-items:center;justify-content:center}
+.char-banner-placeholder span{font-family:'Cinzel',serif;font-size:3rem;color:var(--accent-dim);opacity:.3}
+
+/* FULLSCREEN CARD OVERLAY */
+.card-overlay{position:fixed;inset:0;z-index:550;background:rgba(0,0,0,.95);
+  opacity:0;pointer-events:none;transition:opacity .3s;display:flex;flex-direction:column}
+.card-overlay.open{opacity:1;pointer-events:auto}
+.card-overlay-close{position:absolute;top:12px;right:16px;z-index:10;
+  background:none;border:none;color:var(--text2);font-size:1.6rem;cursor:pointer;padding:8px}
+.card-carousel{flex:1;position:relative;overflow:hidden;touch-action:pan-y}
+.card-slide{position:absolute;inset:0;display:flex;align-items:flex-start;justify-content:center;
+  padding:20px;padding-top:50px;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  transition:transform .35s ease,opacity .35s ease;opacity:0;pointer-events:none}
+.card-slide.active{opacity:1;pointer-events:auto;transform:translateX(0)}
+.card-slide.left{transform:translateX(-100%);opacity:0}
+.card-slide.right{transform:translateX(100%);opacity:0}
+.card-fullscreen{width:100%;max-width:400px;border-radius:12px;
+  padding:28px 24px;display:flex;flex-direction:column;position:relative;margin-bottom:20px}
+.card-fs-bg{position:absolute;inset:0;z-index:0;border-radius:12px;
+  background:linear-gradient(145deg,#2a2318 0%,#1e1a14 30%,#2a2318 60%,#1a1610 100%);
+  border:1px solid var(--accent-dim)}
+.card-fs-bg::before{content:'';position:absolute;inset:0;border-radius:12px;
+  background:rgba(20,16,12,.55);opacity:1;z-index:1}
+.card-fs-bg::after{content:'';position:absolute;inset:0;border-radius:12px;
+  background:radial-gradient(ellipse at 30% 20%,rgba(201,168,76,.06) 0%,transparent 60%),
+  radial-gradient(ellipse at 70% 80%,rgba(201,168,76,.04) 0%,transparent 50%)}
+.card-fs-content{position:relative;z-index:2}
+.card-fs-title{font-family:'Cinzel',serif;font-size:1.3rem;font-weight:900;color:var(--accent);
+  text-align:center;margin-bottom:16px;padding-bottom:12px;
+  border-bottom:1px solid var(--accent-dim);letter-spacing:2px;text-transform:uppercase}
+.card-fs-body{font-family:'Crimson Text',serif;font-size:1.05rem;line-height:1.7;
+  color:var(--text2);white-space:pre-wrap}
+.card-fs-body strong,.card-fs-body b{color:var(--text)}
+.card-pips{display:flex;justify-content:center;gap:8px;padding:16px 0;
+  padding-bottom:calc(16px + env(safe-area-inset-bottom,0px))}
+.card-pip{width:8px;height:8px;border-radius:50%;background:var(--dim);transition:background .2s}
+.card-pip.active{background:var(--accent)}
+
+/* TAP HINT FOR CARDS */
+.cards-tap-area{cursor:pointer;position:relative}
+.cards-tap-hint{text-align:center;font-size:.7rem;color:var(--dim);font-style:italic;
+  margin-top:6px;font-family:'Cinzel',serif;letter-spacing:.5px}
+
+.hidden{display:none!important}
+
+/* COMPANION PORTRAIT */
+.comp-portrait-wrap{display:flex;justify-content:center;margin-bottom:12px}
+.comp-portrait{display:block;max-width:100%;max-height:340px;width:auto;height:auto;border-radius:14px;border:2px solid var(--accent-dim);
+  cursor:pointer;transition:border-color .2s;box-shadow:0 6px 18px rgba(0,0,0,.45)}
+.comp-portrait:active{border-color:var(--accent)}
+
+/* NOTES */
+.notes-area{width:100%;min-height:calc(100vh - 200px);background:var(--input);border:1px solid var(--border);
+  border-radius:6px;color:var(--text);font-family:'Crimson Text',serif;font-size:1rem;
+  padding:12px;resize:vertical;line-height:1.6}
+.notes-area:focus{outline:none;border-color:var(--accent)}
+
+/* ENLARGE TOGGLE */
+.enlarge-row{display:flex;align-items:center;justify-content:center;gap:10px;padding:8px 12px;
+  background:var(--card);border:1px solid var(--border);border-radius:6px;margin-bottom:8px;cursor:pointer;
+  transition:all .3s}
+.enlarge-row.active{background:rgba(90,138,180,.15);border-color:var(--blue);
+  box-shadow:0 0 12px rgba(90,138,180,.3)}
+.enlarge-label{font-family:'Cinzel',serif;font-size:.8rem;color:var(--dim);letter-spacing:1px;text-transform:uppercase;
+  transition:color .3s}
+.enlarge-row.active .enlarge-label{color:var(--blue);font-weight:700}
+.enlarge-toggle{width:44px;height:24px;background:var(--input);border:1px solid var(--border);
+  border-radius:12px;position:relative;transition:background .2s,border-color .2s;flex-shrink:0}
+.enlarge-toggle.on{background:var(--blue);border-color:var(--blue)}
+.enlarge-toggle::after{content:'';position:absolute;width:18px;height:18px;border-radius:50%;
+  background:var(--text2);top:2px;left:2px;transition:transform .2s,background .2s}
+.enlarge-toggle.on::after{transform:translateX(20px);background:#fff}
+.enlarge-banner{display:none;text-align:center;padding:6px 12px;background:rgba(90,138,180,.2);
+  border:1px solid var(--blue);border-radius:6px;margin-bottom:8px;font-family:'Cinzel',serif;
+  font-size:.75rem;color:var(--blue);letter-spacing:1px;text-transform:uppercase;
+  animation:enlargePulse 2s infinite}
+.enlarge-banner.show{display:block}
+@keyframes enlargePulse{0%,100%{opacity:1}50%{opacity:.6}}
+.app-header.enlarged{background:rgba(90,138,180,.2);border-bottom-color:var(--blue)}
+/* EXTRACT & MUTAGEN & BOMB UI */
+.bomb-item,.extract-item{display:inline-flex;align-items:center;gap:4px;background:var(--input);
+  border:1px solid var(--border);border-radius:4px;padding:5px 10px;margin:3px;
+  font-size:.85rem;color:var(--text);cursor:pointer;transition:all .2s}
+.bomb-item:active,.extract-item:active{background:var(--accent-glow);border-color:var(--accent)}
+.extract-item.consumed,.bomb-item.consumed{opacity:.25;text-decoration:line-through;pointer-events:none}
+.mut-btn{display:flex;flex-direction:column;align-items:center;gap:2px;
+  background:var(--input);border:1px solid var(--border);border-radius:6px;
+  padding:10px 14px;color:var(--text);cursor:pointer;transition:all .2s;flex:1}
+.mut-btn:active,.mut-btn.active{background:var(--accent-glow);border-color:var(--accent)}
+.mut-btn .mut-stat{font-family:'Cinzel',serif;font-size:1rem;font-weight:700;color:var(--accent)}
+.mut-btn .mut-detail{font-size:.7rem;color:var(--text2);text-align:center}
+.mut-row{display:flex;gap:8px;margin-bottom:8px}
+.mut-end{display:block;width:100%;padding:8px;background:var(--red);color:var(--bg);
+  border:none;border-radius:4px;font-family:'Cinzel',serif;font-size:.8rem;cursor:pointer;margin-top:6px}
+.extract-level-header{font-family:'Cinzel',serif;font-size:.8rem;color:var(--accent);
+  margin:10px 0 4px;letter-spacing:.5px}
+.prep-modal-level{margin:12px 0;padding:8px;background:var(--input);border-radius:6px}
+.prep-modal-level h4{font-family:'Cinzel',serif;font-size:.8rem;color:var(--accent);margin-bottom:6px}
+.prep-slot{display:flex;align-items:center;gap:6px;margin:4px 0}
+.prep-slot select{background:var(--input);border:1px solid var(--border);color:var(--text);
+  padding:6px;border-radius:4px;font-family:'Crimson Text',serif;font-size:.9rem;flex:1}
+</style>
+</head>
+<body>
+
+<!-- SETUP -->
+<div class="setup-overlay hidden" id="setupScreen">
+<div class="setup-inner">
+  <div class="setup-title">Pathfinder Companion</div>
+  <div class="setup-subtitle">Enter your character info to get started</div>
+  <div class="setup-section"><h3>Identity</h3>
+    <div class="setup-row"><div class="setup-field"><label>Name</label><input id="s-name" placeholder="Character Name"></div></div>
+    <div class="setup-row">
+      <div class="setup-field"><label>Race</label><input id="s-race" placeholder="Human"></div>
+      <div class="setup-field"><label>Size</label><select id="s-size"><option value="M">Medium</option><option value="S">Small</option><option value="T">Tiny</option><option value="L">Large</option></select></div>
+    </div>
+    <div class="setup-row">
+      <div class="setup-field"><label>Class</label><input id="s-class" placeholder="Fighter"></div>
+      <div class="setup-field"><label>Level</label><input id="s-level" type="number" value="3" min="1" max="20"></div>
+    </div>
+    <div class="setup-row">
+      <div class="setup-field"><label>Deity</label><input id="s-deity" placeholder="None"></div>
+      <div class="setup-field"><label>Speed (ft)</label><input id="s-speed" type="number" value="30"></div>
+    </div>
+  </div>
+  <div class="setup-section"><h3>Ability Scores</h3><div class="setup-ability-grid" id="setupAbilities"></div></div>
+  <div class="setup-section"><h3>Combat Basics</h3>
+    <div class="setup-row">
+      <div class="setup-field"><label>Max HP</label><input id="s-maxhp" type="number" value="20"></div>
+      <div class="setup-field"><label>BAB</label><input id="s-bab" type="number" value="0"></div>
+    </div>
+    <h3>Saving Throws (Base)</h3>
+    <div class="setup-row">
+      <div class="setup-field"><label>Fort</label><input id="s-fort-base" type="number" value="0"></div>
+      <div class="setup-field"><label>Ref</label><input id="s-ref-base" type="number" value="0"></div>
+      <div class="setup-field"><label>Will</label><input id="s-will-base" type="number" value="0"></div>
+    </div>
+  </div>
+  <div class="setup-section"><h3>Options</h3>
+    <div class="setup-toggle-row"><span>I have a companion creature</span><div class="toggle-switch" id="s-companion" onclick="this.classList.toggle('on')"></div></div>
+    <div class="setup-toggle-row"><span>I use spells or daily powers</span><div class="toggle-switch" id="s-powers" onclick="this.classList.toggle('on')"></div></div>
+  </div>
+  <div class="setup-section"><h3>Languages</h3><div class="setup-field"><input id="s-languages" placeholder="Common, Elven"></div></div>
+  <div class="setup-section"><h3>Special Senses</h3><div class="setup-field"><input id="s-senses" placeholder="Darkvision 60 ft."></div></div>
+  <button class="setup-btn" onclick="completeSetup()">Begin Adventure</button>
+</div>
+</div>
+
+<!-- MAIN APP -->
+<div class="app-container" id="appContainer" style="display:flex">
+<div class="char-bg" id="charBg"></div>
+<div class="app-header">
+  <button class="header-edit-btn" style="left:12px;right:auto" onclick="openThemePicker()" title="Theme">🎨</button>
+  <span class="header-name" id="headerName">Character</span>
+  <span class="header-info" id="headerInfo"></span>
+  <button class="header-edit-btn" onclick="openSettings()">⚙</button>
+</div>
+<div class="tab-content-area" id="contentArea">
+
+  <!-- CHARACTER -->
+  <div class="tab-page active" id="page-character">
+    <div class="char-banner" id="charBanner">
+      <div class="char-banner-placeholder"><span>⚔</span></div>
+      <div class="char-banner-gradient"></div>
+      <div class="char-banner-info">
+        <div class="char-banner-name" id="bannerName">Character</div>
+        <div class="char-banner-sub" id="bannerSub">Race Class Level</div>
+      </div>
+    </div>
+    <div class="hp-tracker">
+      <button class="hp-btn minus" onclick="adjHP(-1)">−</button>
+      <div class="hp-display"><div class="hp-label">Hit Points</div>
+        <div class="hp-numbers"><span class="hp-current" id="hpCur">20</span><span class="hp-slash">/</span><span class="hp-max" id="hpMax">20</span></div>
+      </div>
+      <button class="hp-btn plus" onclick="adjHP(1)">+</button>
+    </div>
+    <div class="enlarge-row" id="tigerRow" onclick="toggleTiger()">
+      <span class="enlarge-label">🐅 Wild Shape — Tiger</span>
+      <div class="enlarge-toggle" id="tigerToggle"></div>
+    </div>
+    <div class="enlarge-banner" id="tigerBanner">🐅 TIGER FORM — Large · STR 22 / DEX 10 · AC 16 · 2 Claws +10, Bite +10 · armor melded, no ACP</div>
+    <div class="section-title">Ability Scores</div>
+    <div class="ability-grid" id="abilityGrid"></div>
+    <div class="section-title">Combat Overview</div>
+    <div class="stat-card">
+      <div class="inline-stat"><span class="label">Initiative <span class="tip-btn" onclick="tip('Initiative','Rolled at the start of combat to determine turn order. d20 + this bonus. DEX mod + Misc.')">?</span></span><span class="value cv" id="dv-init">+0</span></div>
+      <div class="inline-stat"><span class="label">Init Misc <span class="tip-btn" onclick="tip('Init Misc','Add bonuses here from traits like Reactionary (+2), feats like Improved Initiative (+4), or other effects.')">?</span></span><span class="value"><input class="ev" id="dv-initmisc" type="number" value="0" onchange="S.initMisc=+this.value||0;recalc()" style="width:45px"></span></div>
+      <div class="inline-stat"><span class="label">Speed <span class="tip-btn" onclick="tip('Speed','How far you can move in a single move action, measured in feet. One square on a grid = 5 feet.')">?</span></span><span class="value" id="dv-speed">30 ft.</span></div>
+    </div>
+    <div class="section-title">Saving Throws</div>
+    <div class="stat-card" id="savesCard"></div>
+    <div class="section-title">Info</div>
+    <div class="stat-card">
+      <div class="inline-stat"><span class="label">Size</span><span class="value" id="dv-size">Medium</span></div>
+      <div class="inline-stat"><span class="label">Senses</span><span class="value" id="dv-senses" style="font-size:.8rem;text-align:right;max-width:60%">—</span></div>
+      <div class="inline-stat"><span class="label">Languages</span><span class="value" id="dv-lang" style="font-size:.8rem;text-align:right;max-width:60%">Common</span></div>
+      <div class="inline-stat"><span class="label">XP</span><span class="value"><input class="ev" id="dv-xp" type="number" value="0" onchange="save()"></span></div>
+      <div class="inline-stat"><span class="label">Next Level</span><span class="value"><input class="ev" id="dv-xpn" type="number" value="9000" onchange="save()"></span></div>
+    </div>
+    <button onclick="exportToGM()" style="width:100%;margin-top:16px;padding:10px;background:var(--input);color:var(--text2);border:1px solid var(--dim);border-radius:8px;font-family:'Crimson Text',Georgia,serif;font-size:.9rem;cursor:pointer">⬇ Export to GM Suite</button>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button onclick="backupData()" style="flex:1;padding:10px;background:var(--input);color:var(--text2);border:1px solid var(--dim);border-radius:8px;font-family:'Crimson Text',Georgia,serif;font-size:.85rem;cursor:pointer">💾 Backup</button>
+      <button onclick="restoreData()" style="flex:1;padding:10px;background:var(--input);color:var(--text2);border:1px solid var(--dim);border-radius:8px;font-family:'Crimson Text',Georgia,serif;font-size:.85rem;cursor:pointer">📂 Restore</button>
+    </div>
+  </div>
+
+  <!-- ATTACK -->
+  <div class="tab-page" id="page-attack">
+    <div class="section-title">Wielding Mode</div>
+    <div class="wield-row" id="wieldRow">
+      <button class="wield-btn active" onclick="setWield('main')">Main Hand</button>
+      <button class="wield-btn" onclick="setWield('twohanded')">Two-Handed</button>
+      <button class="wield-btn" onclick="setWield('dualwield')">Dual Wield</button>
+    </div>
+    <div class="section-title">Equipped Weapon(s)</div>
+    <div class="stat-card" id="equippedWeaponCard"><div style="color:var(--dim);font-style:italic;font-size:.9rem">No weapon equipped. Add in Gear tab.</div></div>
+
+    <div class="section-title">Attack Bonuses</div>
+    <div class="stat-card">
+      <div class="inline-stat"><span class="label">BAB <span class="tip-btn" onclick="tip('BAB','Base Attack Bonus. Your core accuracy with weapons. Added to your d20 roll when you attack. Goes up as you level.')">?</span></span><span class="value"><input class="ev" id="dv-bab" type="number" value="0" onchange="save();recalc()"></span></div>
+      <div class="inline-stat"><span class="label">Melee Attack <span class="tip-btn" onclick="tip('Melee Attack','BAB + STR modifier + size modifier.')">?</span></span><span class="value cv" id="dv-matk">+0</span></div>
+      <div class="inline-stat"><span class="label">Ranged Attack <span class="tip-btn" onclick="tip('Ranged Attack','BAB + DEX modifier + size modifier.')">?</span></span><span class="value cv" id="dv-ratk">+0</span></div>
+      <div class="inline-stat"><span class="label">CMB <span class="tip-btn" onclick="tip('CMB','Combat Maneuver Bonus. Roll d20 + this vs their CMD to trip, grapple, disarm, etc.')">?</span></span><span class="value cv" id="dv-cmb">+0</span></div>
+    </div>
+
+    <div class="section-title">Damage Bonuses</div>
+    <div class="stat-card">
+      <div class="inline-stat"><span class="label">Melee Damage <span class="tip-btn" onclick="tip('Melee Damage','STR modifier added to melee damage. ×1.5 for two-handed, ×0.5 for off hand.')">?</span></span><span class="value cv" id="dv-mdmg">+0</span></div>
+      <div class="inline-stat"><span class="label">Off-Hand Damage</span><span class="value cv" id="dv-ohdmg" style="font-size:.85rem">+0</span></div>
+      <div class="inline-stat"><span class="label">Ranged Damage <span class="tip-btn" onclick="tip('Ranged Damage','Usually 0 unless using a composite bow (add STR) or thrown weapon (add STR).')">?</span></span><span class="value"><input class="ev" id="dv-rdmg" type="number" value="0" onchange="save()" style="width:45px"></span></div>
+    </div>
+
+    <div class="section-title">Attack Cards</div>
+    <div id="atkCards"><div style="color:var(--dim);font-style:italic;font-size:.9rem">No attack cards yet.</div></div>
+    <div class="cards-tap-hint" id="atkCardsHint" style="display:none">Tap a card to view full screen · Swipe to browse</div>
+    <button class="add-btn" onclick="event.stopPropagation();openAddCard('player')">+ Add Attack Card</button>
+  </div>
+
+  <!-- DEFENSE -->
+  <div class="tab-page" id="page-defense">
+    <div class="section-title">Equipped Armor & Shield</div>
+    <div class="stat-card" id="eqArmorCard"><div style="color:var(--dim);font-style:italic;font-size:.9rem">No armor equipped.</div></div>
+
+    <div class="section-title">Armor Class</div>
+    <div class="stat-card">
+      <div class="inline-stat"><span class="label">AC <span class="tip-btn" onclick="tip('AC','Armor Class. An enemy must match or beat this to hit you.')">?</span></span><span class="value cv" style="font-size:1.3rem" id="dv-ac">10</span></div>
+      <div class="inline-stat"><span class="label">Touch AC <span class="tip-btn" onclick="tip('Touch AC','AC without armor or shields — just dodge ability. Used against touch spells and special attacks.')">?</span></span><span class="value cv" id="dv-tac">10</span></div>
+      <div class="inline-stat"><span class="label">Flat-Footed <span class="tip-btn" onclick="tip('Flat-Footed AC','AC when caught off guard. No DEX bonus. Applies before your first turn in combat.')">?</span></span><span class="value cv" id="dv-ffac">10</span></div>
+    </div>
+    <div class="section-title">Defense Stats</div>
+    <div class="stat-card">
+      <div class="inline-stat"><span class="label">CMD <span class="tip-btn" onclick="tip('CMD','Combat Maneuver Defense. Enemies must beat this to trip, grapple, or disarm you.')">?</span></span><span class="value cv" id="dv-cmd">10</span></div>
+      <div class="inline-stat"><span class="label">Spell Resistance <span class="tip-btn" onclick="tip('Spell Resistance','Casters must beat this with a caster level check for their spell to affect you.')">?</span></span><span class="value"><input class="ev" id="dv-sr" type="number" value="0" onchange="save()"></span></div>
+      <div class="inline-stat"><span class="label">DR <span class="tip-btn" onclick="tip('DR','Damage Reduction. Reduces physical damage unless the attacker overcomes the listed type.')">?</span></span><span class="value"><input class="ev" id="dv-dr" style="width:70px" onchange="save()"></span></div>
+    </div>
+    <div class="section-title">AC Breakdown</div>
+    <div class="stat-card">
+      <div class="inline-stat"><span class="label">Armor Bonus</span><span class="value"><input class="ev" id="ac-armor" type="number" value="0" onchange="save();recalc()"></span></div>
+      <div class="inline-stat"><span class="label">Shield Bonus</span><span class="value"><input class="ev" id="ac-shield" type="number" value="0" onchange="save();recalc()"></span></div>
+      <div class="inline-stat"><span class="label">Natural Armor</span><span class="value"><input class="ev" id="ac-nat" type="number" value="0" onchange="save();recalc()"></span></div>
+      <div class="inline-stat"><span class="label">Deflection <span class="tip-btn" onclick="tip('Deflection','Bonus to AC from magical effects like Ring of Protection.')">?</span></span><span class="value"><input class="ev" id="ac-defl" type="number" value="0" onchange="save();recalc()"></span></div>
+      <div class="inline-stat"><span class="label">Dodge <span class="tip-btn" onclick="tip('Dodge Bonus','Bonus from Dodge feat and similar effects. Lost when flat-footed or denied DEX. Included in AC and Touch AC but NOT Flat-Footed AC.')">?</span></span><span class="value"><input class="ev" id="ac-dodge" type="number" value="0" onchange="save();recalc()"></span></div>
+      <div class="inline-stat"><span class="label">Misc</span><span class="value"><input class="ev" id="ac-misc" type="number" value="0" onchange="save();recalc()"></span></div>
+      <div class="inline-stat"><span class="label">Max DEX (armor)</span><span class="value"><input class="ev" id="ac-maxdex" type="number" value="99" onchange="save();recalc()" style="width:45px"></span></div>
+      <div class="inline-stat"><span class="label">Worn Items <span class="tip-btn" onclick="tip('Worn Items AC','Auto-calculated from AC bonuses on equipped items in your Armor/Worn slots (excluding Armor and Shield, which have their own fields above).')">?</span></span><span class="value cv" id="dv-worn-ac">0</span></div>
+      <div class="inline-stat"><span class="label">Armor Check Penalty</span><span class="value cv" id="dv-acp">0</span></div>
+      <div class="inline-stat"><span class="label">Spell Failure %</span><span class="value"><input class="ev" id="ac-sf" type="number" value="0" onchange="save()" style="width:45px"></span></div>
+    </div>
+  </div>
+
+  <!-- GEAR -->
+  <div class="tab-page" id="page-gear">
+    <div class="gold-row">
+      <span class="gold-label">GP</span>
+      <input class="ev gold-input" id="dv-gp" type="number" value="0" onchange="save()">
+    </div>
+    <div class="sub-tabs">
+      <button class="sub-tab active" onclick="showGS('weapons')">Weapons</button>
+      <button class="sub-tab" onclick="showGS('equip')">Armor/Worn</button>
+      <button class="sub-tab" onclick="showGS('other')">Equipment</button>
+    </div>
+    <div id="gs-weapons" class="gear-sub">
+      <div id="gearWeaponsList"></div>
+      <button class="add-btn" onclick="openAddGear('weapons')">+ Add Weapon</button>
+    </div>
+    <div id="gs-equip" class="gear-sub hidden">
+      <div class="section-title" style="margin-top:4px">Equipment Slots</div>
+      <div class="slot-grid" id="slotGrid"></div>
+      <div class="section-title">Unequipped</div>
+      <div id="gearEquipList"></div>
+      <button class="add-btn" onclick="openAddGear('equip')">+ Add Armor/Worn Item</button>
+    </div>
+    <div id="gs-other" class="gear-sub hidden">
+      <div id="gearOtherList"></div>
+      <button class="add-btn" onclick="openAddGear('other')">+ Add Equipment</button>
+    </div>
+  </div>
+
+  <!-- SKILLS -->
+  <div class="tab-page" id="page-skills">
+    <div class="skill-header">
+      <span class="skill-cs" style="border:none"></span>
+      <span class="skill-name">Skill</span>
+      <span style="width:30px;text-align:center">Rnk</span>
+      <span style="width:30px;text-align:center">Msc</span>
+      <span style="min-width:28px;text-align:center">Tot</span>
+    </div>
+    <div id="skillsList"></div>
+  </div>
+
+  <!-- FEATS/FEATURES -->
+  <div class="tab-page" id="page-feats">
+    <div class="feat-section"><div class="feat-section-header" onclick="toggleFS('always')"><span class="chevron open" id="chev-always">▶</span><span class="section-name">Always Active</span></div><div class="feat-list" id="feats-always"></div><button class="add-btn" onclick="openAddFeat('always')">+ Add</button></div>
+    <div class="feat-section"><div class="feat-section-header" onclick="toggleFS('combat')"><span class="chevron open" id="chev-combat">▶</span><span class="section-name">In Combat</span></div><div class="feat-list" id="feats-combat"></div><button class="add-btn" onclick="openAddFeat('combat')">+ Add</button></div>
+    <div class="feat-section"><div class="feat-section-header" onclick="toggleFS('special')"><span class="chevron open" id="chev-special">▶</span><span class="section-name">Special / Situational</span></div><div class="feat-list" id="feats-special"></div><button class="add-btn" onclick="openAddFeat('special')">+ Add</button></div>
+  </div>
+
+  <!-- COMPANION -->
+  <div class="tab-page" id="page-companion">
+    <div class="comp-portrait-wrap" id="compPortraitWrap"></div>
+    <div class="section-title">Companion</div>
+    <div class="stat-card">
+      <div class="inline-stat"><span class="label">Name</span><span class="value"><input class="ev" id="comp-name" style="width:100px" onchange="save()"></span></div>
+      <div class="inline-stat"><span class="label">Type</span><span class="value"><input class="ev" id="comp-type" style="width:100px" onchange="save()"></span></div>
+    </div>
+    <div class="hp-tracker" style="margin-top:8px">
+      <button class="hp-btn minus" onclick="adjCHP(-1)">−</button>
+      <div class="hp-display"><div class="hp-label">Companion HP</div>
+        <div class="hp-numbers"><span class="hp-current" id="cHpCur">10</span><span class="hp-slash">/</span><span class="hp-max" id="cHpMax">10</span></div>
+      </div>
+      <button class="hp-btn plus" onclick="adjCHP(1)">+</button>
+    </div>
+    <div class="section-title">Stats</div>
+    <div class="ability-grid" id="compAbGrid"></div>
+    <div class="stat-card">
+      <div class="inline-stat"><span class="label">AC</span><span class="value"><input class="ev" id="comp-ac" type="number" value="10" onchange="save()"></span></div>
+      <div class="inline-stat"><span class="label">Speed</span><span class="value"><input class="ev" id="comp-spd" style="width:65px" onchange="save()"></span></div>
+      <div class="inline-stat"><span class="label">Fort</span><span class="value"><input class="ev" id="comp-fort" type="number" value="0" onchange="save()" style="width:40px"></span></div>
+      <div class="inline-stat"><span class="label">Ref</span><span class="value"><input class="ev" id="comp-ref" type="number" value="0" onchange="save()" style="width:40px"></span></div>
+      <div class="inline-stat"><span class="label">Will</span><span class="value"><input class="ev" id="comp-will" type="number" value="0" onchange="save()" style="width:40px"></span></div>
+    </div>
+    <div class="section-title">Companion Attacks</div>
+    <div id="compAtkCards"><div style="color:var(--dim);font-style:italic;font-size:.9rem">No companion attacks.</div></div>
+    <div class="cards-tap-hint" id="compAtkCardsHint" style="display:none">Tap cards to view full screen</div>
+    <button class="add-btn" onclick="event.stopPropagation();openAddCard('companion')">+ Add Attack</button>
+    <div class="section-title">Abilities</div>
+    <div id="compAbilities"></div>
+    <button class="add-btn" onclick="openAddFeat('companion')">+ Add Ability</button>
+  </div>
+
+  <!-- POWERS -->
+  <div class="tab-page" id="page-powers">
+    <div class="section-title">Daily Resources</div>
+    <div style="color:var(--text2);font-size:.82rem;margin-bottom:8px">Tap a pip to spend or restore it. Wild Shape is tracked in hours; the Minor Form buff in minutes. Resets on New Day.</div>
+    <div id="resSec"></div>
+
+    <div class="section-title" style="margin-top:16px">The Tiger</div>
+    <div style="color:var(--text2);font-size:.82rem;line-height:1.6">
+      <strong style="color:var(--accent)">Wild Shape (standard):</strong> become a Large dire tiger, 1-hour chunks, shift freely<br>
+      <strong style="color:var(--accent)">Minor Form (swift):</strong> +2 DEX, 1-minute chunks<br>
+      <span style="color:var(--dim);font-size:.95em">Full tiger stat block and attacks on the Attacks tab.</span>
+    </div>
+
+    <button class="long-rest-btn" onclick="newDay()" style="margin-top:16px">⟳ New Day — Reset Wild Shape</button>
+  </div>
+
+  <!-- NOTES -->
+  <div class="tab-page" id="page-notes">
+    <div class="section-title" style="margin-top:4px">Notes</div>
+    <textarea class="notes-area" id="notes-text" placeholder="Jot down anything — session notes, reminders, loot splits, NPC names, plans..." oninput="save()"></textarea>
+  </div>
+
+</div>
+<div class="tab-bar" id="tabBar"></div>
+<button class="dice-fab" onclick="toggleDice()">🎲</button>
+</div>
+
+<!-- DICE OVERLAY -->
+<div class="dice-overlay" id="diceOvl" onclick="if(event.target===this)toggleDice()">
+<div class="dice-panel">
+  <div class="dice-result-area">
+    <div class="dice-result-number" id="diceRes">—</div>
+    <div class="dice-result-breakdown" id="diceBrk"></div>
+  </div>
+  <div class="dice-count-row">
+    <button class="dice-count-btn" onclick="diceN=Math.max(1,diceN-1);$('diceND').textContent=diceN">−</button>
+    <span class="dice-count-display" id="diceND">1</span>
+    <button class="dice-count-btn" onclick="diceN=Math.min(20,diceN+1);$('diceND').textContent=diceN">+</button>
+    <span style="font-size:.8rem;color:var(--dim);margin-left:4px">dice</span>
+    <div style="flex:1"></div>
+    <label style="font-size:.8rem;color:var(--text2)">Mod</label>
+    <input id="diceMod" type="number" value="0" style="width:50px;background:var(--input);border:1px solid var(--border);color:var(--text);padding:6px;border-radius:4px;text-align:center;font-size:1rem;font-family:'Crimson Text',serif">
+  </div>
+  <div class="dice-buttons">
+    <button class="dice-btn" onclick="roll(4)">d4</button>
+    <button class="dice-btn" onclick="roll(6)">d6</button>
+    <button class="dice-btn" onclick="roll(8)">d8</button>
+    <button class="dice-btn" onclick="roll(10)">d10</button>
+    <button class="dice-btn" onclick="roll(12)">d12</button>
+    <button class="dice-btn" onclick="roll(20)">d20</button>
+    <button class="dice-btn" onclick="roll(100)">d100</button>
+    <button class="dice-btn" style="font-size:.7rem" onclick="S.diceHist=[];renderDH();$('diceRes').textContent='—';$('diceBrk').textContent='';save()">Clear</button>
+  </div>
+  <div class="dice-history" id="diceHist"></div>
+</div>
+</div>
+
+<!-- FULLSCREEN PORTRAIT -->
+<div class="tooltip-overlay" id="portraitOvl" onclick="this.classList.remove('show')" style="padding:10px">
+  <img id="portraitImg" src="" style="max-width:100%;max-height:90vh;border-radius:8px;border:1px solid var(--accent-dim);object-fit:contain" onclick="event.stopPropagation()">
+</div>
+
+<!-- FULLSCREEN CARD VIEW -->
+<div class="card-overlay" id="cardOverlay">
+  <button class="card-overlay-close" onclick="closeCardView()">✕</button>
+  <div class="card-carousel" id="cardCarousel"></div>
+  <div class="card-pips" id="cardPips"></div>
+</div>
+
+<!-- TOOLTIP -->
+<div class="tooltip-overlay" id="tipOvl" onclick="this.classList.remove('show')">
+<div class="tooltip-box" onclick="event.stopPropagation()">
+  <div class="tooltip-title" id="tipT"></div>
+  <div class="tooltip-text" id="tipX"></div>
+</div>
+</div>
+
+<!-- MODAL -->
+<div class="modal-overlay" id="modOvl" onclick="if(event.target===this)closeMod()">
+<div class="modal-box" id="modBox"></div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+// CHARACTER ID — unique localStorage key
+const CHAR_ID = 'raelynn-v1';
+const RUNDT_IMG='data:image/jpeg;base64,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wlKFp+KXFADAtLin4oxQA3FLilxRigBKMUtFACYopaKACkp1JQAmKMUtFACUYpcUtADcUmKdRQA3FGKfSUANxRTqKAIaWkpaAEopaKACilooAKKKKACiiigApaSloAKKKKACiiigBaKKWgAopKWgBKKWigBKDS0mKAEopaKAG4oxTqMUANxRinUUANwaMU7FGKAG4pNtPxSUAM20Yp+KDQAzbSFAakAox7UAV3hzVeSCtDHtTXQEUAY0sPtVC4TANbk8eBWRe/KrGmBjk4c+pNPDDHJqNeT6k0/YT+NQzZbEikY+8aUN70ghZTjnpQFYUrjsKH+anZwwYGmMuDyMUoFAHZwOJIkcdGUGpBVHSGJ0+HPYEfrV4VZgLilxQKWgBuKMU6igBtLS0tADaWg0YoAKXFGKWgBMUUtGKAExRilooATFJinUUANopcUYoASilooASiloxQAlFLiigBKKXFFAEFFFGKACloooAKKKWgBKKKWgAooooAKKKMUAFFFFABS0lAoAWlopKAFoopaAEopaKAEooooASloxS0AJijFLiigBKDS0UANpeaDSUALzRijmigAooxRigAooooAMUmKUmkoAhnUEVzuquEVs9+K6WVcrXL66g3KGzgntQBlodgJB5qyjbgvTiqeF6b3/ACFTpHgcMfypWNEzTgCMMu1NcRqxINU13BeJP0prhsf61fyNTYpSJZXDHgUwED5mOB3qEo5/5ar+RpfLA+8xfH4CmkJu51Ohy+bp6HptJFaS1n6LA0dgm8YLktj27VogVRkLS0lOxQAYoxRiloATFLRRQAUUtFABRRRQAUUUUDCkpaMUCCkpaKAEopaXFADcUUtFACYpcUUUAJRS4ooASilxRQBXoopaAEpaKWgBKKWigBKKWigBKWiigAopaKAEopaKAEoxS0UAJR+FLRQAUUUUALRRRQAUUUUAFFFFABRS0lABRRS0AJRRRQAUlLSUAFGKWjmgBKMUtFACYpKdSUAJWVrWmG8h/dnDjkVrYpDQB59cWl5bMRJG49yM1B5068H9RXozKD1Gahe1hb70SH/gIp3A8/8AtM49KeLi4cgBN34Gu7Fjbf8APCP/AL5FSx28afdjUfQUXDU4u1sdSuSPLg2j1YYFbun6B5bLJeSeaw5CAYX/AOvW6FxS4pAIBS4pQKWgBB9KcKMUtABRS0UAJRS0UDCiiigAooooAKMUUtACUUUYoAKKKKACiiigAopaKBCUUtFACUUtJQAUUUUAVxS0lLQAlLRRQAUUUtACUUtFACUtFFACUtFFABRRRQAUUtJQAUYpaKAExS4oooAKMUtFACUUuKKAEpaKWgBKKWigBKKWigBMUUtFACUUtFACYoxS0UAFFFFABRiiigBCKTFOooAbikKj0p+KMUAN20oFOApcUANxS4paAKAExS0tFABijFLRQAlFLRQMSloooEJRS0UDEpaKKACiiigAooooAKKKKAExS0UUAFFFFABRRS0CEopaSgBKKWigCuKXFFFABiiiimAUUUUgCloooAKKKKADHNFFFABRRRQAYpcUUUAA6UtFFACYpcUUUAFFFFABiiiigApcUUUAFGKKKADFBoooAMUYoooAKKKKAFxSUUUAFFFFABilxRRQA3FOA4oooAMUYoooAMUuKKKACiiigBaKKKAFooooAKKKKAEpaKKBhSGiigQUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAtFFFABSUUUAFFFFAH/9k=';
+const COMP_IMG='';
+const STORAGE_KEY = 'pf-' + CHAR_ID;
+const DEFAULT_THEME='amberwild';
+const DATA_VERSION = 1;
+const ABILS=['STR','DEX','CON','INT','WIS','CHA'];
+const AB_FULL={STR:'Strength',DEX:'Dexterity',CON:'Constitution',INT:'Intelligence',WIS:'Wisdom',CHA:'Charisma'};
+const SIZE_MOD={T:2,S:1,M:0,L:-1,H:-2};
+const AB_TIPS={
+  STR:"Strength. YOUR ANCHOR. Claw attack and damage, CMB/grapple, Climb, Swim — and STR 22 in tiger form. The party's muscle.",
+  DEX:"Dexterity. A little AC, Reflex, and Initiative. Tiger Minor Form pumps it +2.",
+  CON:"Constitution. Hit points and Fortitude. With Toughness you're the party's HP tank at 46.",
+  INT:"Intelligence. Minimal. A skill or two.",
+  WIS:"Wisdom. Feeds Defensive Instinct (AC while unarmored/wild-shaped), Will saves, Perception, and your wild-shape duration.",
+  CHA:"Charisma. Wild Empathy and social. Your lowest stat."
+};
+const SLOTS=['Armor','Shield','Head','Headband','Eyes','Neck','Shoulders','Chest','Body','Belt','Wrists','Hands','Ring 1','Ring 2','Feet'];
+const FORMULA_DESCS={};
+const SKILLS=[
+  ['Acrobatics','DEX'],['Appraise','INT'],['Bluff','CHA'],['Climb','STR'],['Craft','INT'],
+  ['Diplomacy','CHA'],['Disable Device','DEX'],['Disguise','CHA'],['Escape Artist','DEX'],
+  ['Fly','DEX'],['Handle Animal','CHA'],['Heal','WIS'],['Intimidate','CHA'],
+  ['Kn. Arcana','INT'],['Kn. Dungeoneering','INT'],['Kn. Engineering','INT'],
+  ['Kn. Geography','INT'],['Kn. History','INT'],['Kn. Local','INT'],['Kn. Nature','INT'],
+  ['Kn. Nobility','INT'],['Kn. Planes','INT'],['Kn. Religion','INT'],['Linguistics','INT'],
+  ['Perception','WIS'],['Perform','CHA'],['Profession','WIS'],['Ride','DEX'],
+  ['Sense Motive','WIS'],['Sleight of Hand','DEX'],['Spellcraft','INT'],['Stealth','DEX'],
+  ['Survival','WIS'],['Swim','STR'],['Use Magic Device','CHA']
+];
+const ACP_SKILLS=['Acrobatics','Climb','Escape Artist','Fly','Ride','Sleight of Hand','Stealth','Swim'];
+const SKILL_ABILS=Object.fromEntries(SKILLS.map(([n,a])=>['sk-'+n.replace(/[^a-zA-Z]/g,''),a]));
+
+let diceN=1;
+let S={
+  name:'Raelynn Bellamy',race:'Half-Elf',cls:'Tiger Shifter',level:4,deity:'',speed:30,size:'M',
+  languages:'Common, Elven, Druidic',senses:'Low-Light Vision',
+  abilities:{STR:18,DEX:12,CON:14,INT:11,WIS:16,CHA:10},
+  abilTemp:{STR:0,DEX:0,CON:0,INT:0,WIS:0,CHA:0},
+  hp:46,maxHp:46,bab:4,wield:'main',
+  saves:{fort:{base:4,magic:1,misc:0,temp:0},ref:{base:4,magic:1,misc:0,temp:0},will:{base:1,magic:1,misc:1,temp:0}},
+  initMisc:2,
+  ac:{armor:4,shield:0,natural:0,deflect:0,dodge:0,misc:1,maxDex:4,spellFail:0},
+  sr:0,dr:'\u2014',xp:0,xpN:0,gp:1683,
+  hasComp:false,hasPow:true,
+  gear:{weapons:[
+    {id:'w1',name:'Claws x2 (+1 Amulet)',damage:'1d4+5',crit:'20/\u00d72',damageType:'P/S',weight:0,range:'',ammo:null,
+     properties:'Two primary natural attacks. Count as magic, silver, and cold iron. +1 attack/damage from the Amulet of Mighty Fists. STR + amulet in damage.'},
+    {id:'w2',name:'Dagger',damage:'1d4+4',crit:'19-20/\u00d72',damageType:'P/S',weight:1,range:'10 ft.',ammo:null,
+     properties:'Melee/thrown backup. STR in damage.'}
+  ],equip:[
+    {id:'e1',name:'Hide Armor',bonus:4,armorType:'Medium',maxDex:4,acp:-3,spellFail:0,weight:25,slotType:'Armor',
+     properties:'+4 armor, Max DEX +4, ACP -3, non-metal. Melds away when you wild shape (no ACP in tiger form).'},
+    {id:'e2',name:'Cloak of Resistance +1',bonus:0,armorType:'',maxDex:99,acp:0,spellFail:0,weight:1,slotType:'Shoulders',
+     properties:'Resistance +1 to all saves. Already in your save totals.'},
+    {id:'e3',name:'Amulet of Mighty Fists +1',bonus:0,armorType:'',maxDex:99,acp:0,spellFail:0,weight:0,slotType:'Neck',
+     properties:'Ancient tiger fang. +1 attack and damage on ALL natural attacks — in both humanoid and tiger form. Already in your claw numbers.'}
+  ],other:[
+    {id:'o1',name:'Potion of CLW x5',weight:0,properties:'1d8+1 healing each. Your self-patch kit.'},
+    {id:'o2',name:'Potion of Protection from Energy (loot)',weight:0,properties:'Absorbs up to 120 points of one energy type for 10 min. Save for a breath weapon or blast.'},
+    {id:'o3',name:"Healer's Kit (10 uses)",weight:1,properties:'+2 to Heal checks.'},
+    {id:'o4',name:'Backpack',weight:2,properties:''},
+    {id:'o5',name:'Bedroll',weight:5,properties:''},
+    {id:'o6',name:'Rope, 50 ft.',weight:10,properties:''},
+    {id:'o7',name:'Rations (5 days)',weight:5,properties:''},
+    {id:'o8',name:'Waterskin',weight:4,properties:''},
+    {id:'o9',name:'Flint & Steel',weight:0,properties:''}
+  ]},
+  slots:{Armor:'e1',Shoulders:'e2',Neck:'e3'},
+  equippedWeapons:{main:'w1',off:null},
+  skills:{
+    'sk-Perception':{ranks:4,misc:5,cs:true},
+    'sk-Stealth':{ranks:4,misc:0,cs:true},
+    'sk-Acrobatics':{ranks:4,misc:0,cs:true},
+    'sk-Climb':{ranks:2,misc:0,cs:true},
+    'sk-Swim':{ranks:2,misc:0,cs:true}
+  },
+  feats:{always:[
+    {name:'Power Attack',desc:'At BAB +4: take -2 to attack for +4 damage per hit (more on two-handed / natural-heavy attacks).'},
+    {name:'Toughness',desc:'+4 HP. Included — part of why you sit at 46.'},
+    {name:'Skill Focus: Perception (Half-Elf)',desc:'+3 Perception. Included.'},
+    {name:'Wild Empathy',desc:'1d20 + 4 + CHA to improve an animal\'s attitude (-4 vs magical beasts of INT 1-2).'},
+    {name:'Woodland Stride',desc:'Move through natural difficult terrain at normal speed.'},
+    {name:'Track',desc:'+1 Survival to follow tracks.'},
+    {name:'Reactionary (Trait)',desc:'+2 Initiative. Included.'},
+    {name:'Indomitable Faith (Trait)',desc:'+1 Will saves. Included.'},
+    {name:'Keen Senses / Elven Immunities',desc:'+2 racial Perception; immune to magic sleep; +2 vs enchantment.'}
+  ],combat:[
+    {name:'Shifter Claws (Swift)',desc:'Grow two primary claws: 1d4 + STR each, +1 from the Amulet. Count as magic, silver, and cold iron — they bypass most low-level DR.'},
+    {name:'Wild Shape \u2014 Tiger (Major Form)',desc:'RETURNED at level 4 (the Confluence\'s suppression broke). Become a dire tiger for up to 7 hours/day. See the Attacks tab for the full form. This is your spotlight.'},
+    {name:'Tiger Minor Form (Swift)',desc:'+2 DEX enhancement for 7 min/day in 1-minute chunks. Not a polymorph — stacks with most things.'},
+    {name:'Power Attack on Claws',desc:'With two claw attacks, Power Attack adds up fast: -2 to hit for +4 damage on each claw.'}
+  ],special:[
+    {name:'Defensive Instinct',desc:'Add your WIS to AC while unarmored (+3), or half (+1) in non-metal armor like your hide. Applies even to touch and flat-footed AC. Already in your AC.'},
+    {name:'Wild Shape Duration',desc:'7 hours/day (shifter level + WIS mod), spent in 1-hour increments. Shifting in or out is a standard action with no daily cap on changes. Gear melds into your body.'},
+    {name:'Amulet of Mighty Fists +1',desc:'The ancient tiger fang at your throat empowers every natural attack in both forms — already in your claw and tiger numbers.'},
+    {name:'Growth Ahead',desc:'+4 racial Stealth at level 8; rake at level 15. The tiger only gets scarier.'}
+  ],companion:[]},
+  atkCards:[
+    {name:'SHIFTER CLAWS \u2014 Humanoid Form',body:'<strong>Swift action</strong> to grow them. Two primary claws:\n\n<strong>To Hit (each):</strong> d20 + 4 (BAB) + 4 (STR) + 1 (Amulet) = <strong>d20 + 9</strong>\n<strong>Damage (each):</strong> 1d4+5 \u00b7 20/\u00d72 \u00b7 P/S\n\nCount as magic / silver / cold iron. Add <strong>Power Attack</strong> (-2 / +4) on both for a big swing. Your everyday melee before you commit to the tiger.'},
+    {name:'\ud83d\udc05 WILD SHAPE \u2014 TIGER (MAJOR FORM)',body:'<strong>Standard action \u00b7 up to 7 hours/day \u00b7 functions as Beast Shape II.</strong> You become a <strong>Large dire tiger</strong>; gear melds in.\n\n<strong>STR 22 (+6) \u00b7 DEX 10 \u00b7 CON 14 \u00b7 Speed 40 ft.</strong>\n<strong>AC 16</strong> (10 -1 size +4 natural +3 Defensive Instinct) \u00b7 Touch 12 \u00b7 FF 16\n<strong>CMB +11</strong> (+15 to grapple with Grab) \u00b7 <strong>CMD 21</strong>\nLow-light vision, scent 30 ft, reach 5 ft.\n\nShift back and forth freely. This is the Chapter\'s hook \u2014 lean into it.'},
+    {name:'\ud83d\udc05 TIGER \u2014 Claws, Bite, Pounce',body:'<strong>Full Attack (tiger form):</strong>\n<strong>2 Claws:</strong> d20 + 10 each, <strong>2d4+7</strong>\n<strong>Bite:</strong> d20 + 10, <strong>2d6+7</strong>\n(4 BAB + 6 STR - 1 size + 1 Amulet on each)\n\n<strong>Pounce:</strong> make this FULL attack at the end of a charge.\n<strong>Grab:</strong> on a claw or bite hit, start a grapple as a free action (+15). Hold something while you keep biting. Power Attack: -2 / +4 per attack.'},
+    {name:'TIGER MINOR FORM \u2014 +2 DEX',body:'<strong>Swift action:</strong> +2 DEX enhancement for up to 7 min/day (1-minute chunks). Better aim, AC, and Reflex.\n\nNot a polymorph, so it layers under most other effects. Track your minutes on the Powers tab.'},
+    {name:'DAGGER \u2014 Backup',body:'<strong>To Hit:</strong> d20 + 4 (BAB) + 4 (STR) = <strong>d20 + 8</strong>\n<strong>Damage:</strong> 1d4+4 \u00b7 19-20/\u00d72 \u00b7 P/S\n\nThrown 10 ft if you need a ranged option in humanoid form. Melds away in tiger form.'}
+  ],
+  compAtkCards:[],
+  comp:{name:'',type:'',hp:10,maxHp:10,ac:10,speed:'',
+    abilities:{STR:10,DEX:10,CON:10,INT:10,WIS:10,CHA:10},fort:0,ref:0,will:0},
+  resources:[
+    {name:'Wild Shape \u2014 Tiger (hours/day)',max:7,used:0},
+    {name:'Tiger Minor Form \u2014 +2 DEX (min/day)',max:7,used:0}
+  ],
+  spellLevels:[],
+  preparedExtracts:[],preparedMutagen:null,activeMutagen:null,
+  rdmg:0,bgImage:RUNDT_IMG,diceHist:[],notes:'',enlarged:false,tigerForm:false,dataVersion:DATA_VERSION
+};
+
+function mod(s){return Math.floor((s-10)/2)}
+function ms(v){return v>=0?'+'+v:''+v}
+function sm(){const es=(S.enlarged||S.tigerForm)?'L':S.size;return SIZE_MOD[es]||0}
+function abm(a){
+  let adj=0;
+  if(S.enlarged){if(a==='STR')adj=2;if(a==='DEX')adj=-2;}
+  if(S.tigerForm){if(a==='STR')adj=4;if(a==='DEX')adj=-2;}
+  return mod((S.abilities[a]||10)+(S.abilTemp[a]||0)+adj);
+}
+function toggleEnlarge(){
+  S.enlarged=!S.enlarged;
+  renderApp();
+}
+function toggleTiger(){
+  S.tigerForm=!S.tigerForm;
+  renderApp();
+}
+
+function exportToGM(){
+  save(); // ensure latest UI values are captured
+  syncArmorAC();
+  recalc();
+  const dx=abm('DEX'), st=abm('STR'), s=sm();
+  const edx=Math.min(dx,S.ac.maxDex);
+  const dodge=S.ac.dodge||0;
+  let wornAC=0;
+  for(const slot of SLOTS){
+    if(slot==='Armor'||slot==='Shield')continue;
+    const itemId=S.slots[slot];
+    if(itemId){const item=S.gear.equip.find(x=>x.id===itemId);if(item&&item.bonus)wornAC+=item.bonus;}
+  }
+  const exp={
+    exportVersion:1,
+    exportDate:new Date().toISOString(),
+    identity:{name:S.name,race:S.race,cls:S.cls,level:S.level,deity:S.deity,
+      speed:S.speed,size:S.size,languages:S.languages,senses:S.senses},
+    abilities:{},
+    combat:{
+      hp:S.hp, maxHp:S.maxHp, bab:S.bab, sr:S.sr, dr:S.dr,
+      initiative:dx+(S.initMisc||0), initMisc:S.initMisc||0,
+      meleeAtk:S.bab+st+s, rangedAtk:S.bab+dx+s,
+      cmb:S.bab+st-s, cmd:10+S.bab+st+dx+dodge-s,
+      wield:S.wield
+    },
+    ac:{
+      total:10+S.ac.armor+S.ac.shield+edx+s+S.ac.natural+S.ac.deflect+dodge+S.ac.misc+wornAC,
+      touch:10+edx+s+S.ac.deflect+dodge+S.ac.misc+wornAC,
+      flatFooted:10+S.ac.armor+S.ac.shield+s+S.ac.natural+S.ac.deflect+S.ac.misc+wornAC,
+      components:{armor:S.ac.armor,shield:S.ac.shield,dex:edx,size:s,
+        natural:S.ac.natural,deflect:S.ac.deflect,dodge:dodge,misc:S.ac.misc,worn:wornAC},
+      maxDex:S.ac.maxDex, spellFail:S.ac.spellFail
+    },
+    saves:{
+      fort:{total:S.saves.fort.base+abm('CON')+S.saves.fort.magic+S.saves.fort.misc+S.saves.fort.temp,...S.saves.fort},
+      ref:{total:S.saves.ref.base+abm('DEX')+S.saves.ref.magic+S.saves.ref.misc+S.saves.ref.temp,...S.saves.ref},
+      will:{total:S.saves.will.base+abm('WIS')+S.saves.will.magic+S.saves.will.misc+S.saves.will.temp,...S.saves.will}
+    },
+    skills:{},
+    gear:{weapons:S.gear.weapons,equip:S.gear.equip,other:S.gear.other},
+    slots:{...S.slots},
+    equippedWeapons:{...S.equippedWeapons},
+    feats:S.feats,
+    atkCards:S.atkCards,
+    resources:S.resources,
+    spellLevels:S.spellLevels,
+    xp:S.xp, xpN:S.xpN, gp:S.gp, rdmg:S.rdmg
+  };
+  // Abilities with computed mods
+  for(const a of ABILS){
+    const tmp=S.abilTemp[a]||0;
+    const eff=S.abilities[a]+tmp;
+    exp.abilities[a]={base:S.abilities[a],temp:tmp,effective:eff,mod:Math.floor((eff-10)/2)};
+  }
+  // Skills with computed totals
+  for(const[key,sk] of Object.entries(S.skills)){
+    const cleanName=key.replace('sk-','');
+    const ab=SKILL_ABILS[key]||'INT';
+    const csBonus=(sk.cs&&sk.ranks>0)?3:0;
+    const total=sk.ranks+abm(ab)+csBonus+(sk.misc||0)+s;
+    exp.skills[cleanName]={ranks:sk.ranks,ability:ab,abilMod:abm(ab),classSkill:sk.cs,
+      csBonus:csBonus,misc:sk.misc||0,total:total};
+  }
+  // Companion
+  if(S.hasComp){
+    exp.companion={...S.comp};
+    exp.compAtkCards=S.compAtkCards||[];
+  }
+  const filename=(S.name||'character').replace(/\s+/g,'_')+'_export.json';
+  const jsonStr=JSON.stringify(exp,null,2);
+  const blob=new Blob([jsonStr],{type:'application/json'});
+  const file=new File([blob],filename,{type:'application/json'});
+  // Use native share sheet on mobile, download on desktop
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    navigator.share({title:S.name+' — GM Export',files:[file]}).catch(()=>{});
+  } else {
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download=filename; a.click();
+    URL.revokeObjectURL(url);
+  }
+}
+
+function backupData(){
+  save();
+  const jsonStr=JSON.stringify(S,null,2);
+  const filename=(S.name||'character').replace(/\s+/g,'_')+'_backup.json';
+  const blob=new Blob([jsonStr],{type:'application/json'});
+  const file=new File([blob],filename,{type:'application/json'});
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    navigator.share({title:S.name+' — Backup',files:[file]}).catch(()=>{});
+  } else {
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download=filename; a.click();
+    URL.revokeObjectURL(url);
+  }
+}
+
+function restoreData(){
+  showMod(`<div class="modal-title">Restore Backup</div>
+    <div style="color:var(--text2);margin:12px 0">Select a backup JSON file. This will <strong style="color:var(--red)">replace all current data</strong> and reload.</div>
+    <div class="modal-field"><input type="file" id="m-restore" accept=".json" style="color:var(--text)"></div>
+    <div class="modal-actions"><button class="modal-btn secondary" onclick="closeMod()">Cancel</button>
+    <button class="modal-btn primary" onclick="doRestore()">Restore</button></div>`);
+}
+function doRestore(){
+  const fileInput=$('m-restore');
+  if(!fileInput||!fileInput.files.length) return;
+  const reader=new FileReader();
+  reader.onload=function(e){
+    try{
+      const d=JSON.parse(e.target.result);
+      if(!d.name && !d.cls){alert('This does not look like a valid backup file.');return;}
+      localStorage.setItem(STORAGE_KEY,JSON.stringify(d));
+      location.reload();
+    }catch(err){alert('Could not read backup file: '+err.message);}
+  };
+  reader.readAsText(fileInput.files[0]);
+}
+
+function save(){
+  S.xp=+$('dv-xp')?.value||0; S.xpN=+$('dv-xpn')?.value||0;
+  S.bab=+$('dv-bab')?.value||0; S.sr=+$('dv-sr')?.value||0;
+  S.dr=$('dv-dr')?.value||'—'; S.gp=+$('dv-gp')?.value||0;
+  S.ac.spellFail=+$('ac-sf')?.value||0; S.ac.maxDex=+$('ac-maxdex')?.value||99;
+  S.ac.armor=+$('ac-armor')?.value||0; S.ac.shield=+$('ac-shield')?.value||0;
+  S.ac.natural=+$('ac-nat')?.value||0; S.ac.deflect=+$('ac-defl')?.value||0;
+  S.ac.dodge=+$('ac-dodge')?.value||0; S.ac.misc=+$('ac-misc')?.value||0; S.rdmg=+$('dv-rdmg')?.value||0;
+  if($('notes-text')) S.notes=$('notes-text').value||'';
+  if(S.hasComp){
+    S.comp.name=$('comp-name')?.value||''; S.comp.type=$('comp-type')?.value||'';
+    S.comp.ac=+$('comp-ac')?.value||10; S.comp.speed=$('comp-spd')?.value||'30 ft.';
+    S.comp.fort=+$('comp-fort')?.value||0; S.comp.ref=+$('comp-ref')?.value||0;
+    S.comp.will=+$('comp-will')?.value||0;
+  }
+  S.dataVersion=DATA_VERSION;
+  localStorage.setItem(STORAGE_KEY,JSON.stringify(S));
+}
+
+function loadState(){
+  const r=localStorage.getItem(STORAGE_KEY);
+  if(!r) return false;
+  try{
+    const d=JSON.parse(r);
+    if(d.dataVersion===DATA_VERSION){
+      // Same version — load everything from storage
+      S={...S,...d};
+      S.abilities={STR:10,DEX:10,CON:10,INT:10,WIS:10,CHA:10,...(d.abilities||{})};
+      S.abilTemp={STR:0,DEX:0,CON:0,INT:0,WIS:0,CHA:0,...(d.abilTemp||{})};
+      S.saves={fort:{base:0,magic:0,misc:0,temp:0,...(d.saves?.fort||{})},
+        ref:{base:0,magic:0,misc:0,temp:0,...(d.saves?.ref||{})},
+        will:{base:0,magic:0,misc:0,temp:0,...(d.saves?.will||{})}};
+      S.ac={armor:0,shield:0,natural:0,deflect:0,dodge:0,misc:0,maxDex:99,spellFail:0,...(d.ac||{})};
+      S.gear={weapons:[],equip:[],other:[],...(d.gear||{})};
+      S.slots=d.slots||{};
+      S.equippedWeapons=d.equippedWeapons||{main:null,off:null};
+      S.feats={always:[],combat:[],special:[],companion:[],...(d.feats||{})};
+      S.comp={...S.comp,...(d.comp||{})};
+      S.skills=d.skills||{};S.resources=d.resources||[];S.spellLevels=d.spellLevels||[];S.preparedExtracts=d.preparedExtracts||[];S.preparedMutagen=d.preparedMutagen||null;S.activeMutagen=d.activeMutagen||null;
+      S.atkCards=d.atkCards||[];S.compAtkCards=d.compAtkCards||[];S.diceHist=d.diceHist||[];
+      S.notes=d.notes||'';
+    } else {
+      // Version mismatch — keep session data, refresh build data from defaults
+      S.hp=d.hp!=null?d.hp:S.hp;
+      S.xp=d.xp||S.xp;S.xpN=d.xpN||S.xpN;S.gp=d.gp!=null?d.gp:S.gp;
+      S.notes=d.notes||'';S.diceHist=d.diceHist||[];
+      S.abilTemp=d.abilTemp||S.abilTemp;
+      S.enlarged=d.enlarged||false;
+      S.tigerForm=d.tigerForm||false;
+      S.comp.hp=d.comp?.hp!=null?d.comp.hp:S.comp.hp;
+      // Preserve resource usage (e.g. Hero Points spent)
+      if(d.resources){d.resources.forEach((dr,i)=>{if(S.resources[i])S.resources[i].used=dr.used||0})}
+    }
+    return true;
+  }catch(e){return false}
+}
+
+// Sync AC fields from equipped armor/shield slots
+function syncArmorAC(){
+  const armorItem=S.slots['Armor']?S.gear.equip.find(x=>x.id===S.slots['Armor']):null;
+  const shieldItem=S.slots['Shield']?S.gear.equip.find(x=>x.id===S.slots['Shield']):null;
+  S.ac.armor=armorItem?.bonus||0; $('ac-armor').value=S.ac.armor;
+  S.ac.shield=shieldItem?.bonus||0; $('ac-shield').value=S.ac.shield;
+  S.ac.maxDex=armorItem?.maxDex!=null?armorItem.maxDex:99; $('ac-maxdex').value=S.ac.maxDex;
+  S.ac.spellFail=(armorItem?.spellFail||0)+(shieldItem?.spellFail||0); $('ac-sf').value=S.ac.spellFail;
+}
+
+// RECALC
+function recalc(){
+  const enl=S.enlarged||S.tigerForm;
+  const ec=enl?'color:var(--accent)':'';
+  const s=sm(), dx=abm('DEX'), st=abm('STR'), wd=abm('WIS');
+  const edx=Math.min(dx,S.ac.maxDex);
+
+  // Initiative (DEX-based, affected by enlarge)
+  const initV=dx+(S.initMisc||0);
+  $('dv-init').textContent=ms(initV);
+  $('dv-init').style.cssText=ec;
+
+  const bab=S.bab;
+
+  // Melee attack (STR + size, both change but cancel out)
+  const matkV=bab+st+s;
+  $('dv-matk').textContent=ms(matkV);
+  // Net zero change on melee but still technically affected
+  $('dv-matk').style.cssText=ec;
+
+  // Ranged attack (DEX + size, both penalized)
+  const ratkV=bab+dx+s;
+  $('dv-ratk').textContent=ms(ratkV);
+  $('dv-ratk').style.cssText=ec;
+
+  // CMB (STR - size, both benefit)
+  const cmbV=bab+st-s;
+  $('dv-cmb').textContent=ms(cmbV);
+  $('dv-cmb').style.cssText=ec;
+
+  // Damage bonuses based on wield mode
+  let mainDmg=st, ohDmg=Math.floor(st/2);
+  if(S.wield==='twohanded') mainDmg=Math.floor(st*1.5);
+  else if(S.wield==='dualwield') ohDmg=Math.floor(st*0.5);
+  $('dv-mdmg').textContent=ms(mainDmg);
+  $('dv-mdmg').style.cssText=ec;
+  $('dv-ohdmg').textContent=S.wield==='dualwield'?ms(ohDmg):'—';
+  if(S.wield==='dualwield')$('dv-ohdmg').style.cssText=ec;
+
+  // AC - sum bonuses from all worn items (non-armor, non-shield)
+  let wornAC=0;
+  for(const slot of SLOTS){
+    if(slot==='Armor'||slot==='Shield')continue;
+    const itemId=S.slots[slot];
+    if(itemId){const item=S.gear.equip.find(x=>x.id===itemId);if(item&&item.bonus)wornAC+=item.bonus;}
+  }
+  const dodge=S.ac.dodge||0;
+  // Tiger form: hide armor melds (armor->0), gains +4 natural armor, Defensive Instinct rises to full WIS
+  const tf=S.tigerForm;
+  const acArmor=tf?0:S.ac.armor;
+  const acNatural=tf?4:S.ac.natural;
+  const acDI=tf?Math.max(abm('WIS'),0):S.ac.misc;
+  const acT=10+acArmor+S.ac.shield+edx+s+acNatural+S.ac.deflect+dodge+acDI+wornAC;
+  $('dv-ac').textContent=acT;
+  $('dv-ac').style.cssText=enl?'color:var(--accent);font-size:1.3rem':'font-size:1.3rem';
+
+  const tacV=10+edx+s+S.ac.deflect+dodge+acDI+wornAC;
+  $('dv-tac').textContent=tacV;
+  $('dv-tac').style.cssText=ec;
+
+  const ffacV=10+acArmor+S.ac.shield+s+acNatural+S.ac.deflect+acDI+wornAC;
+  $('dv-ffac').textContent=ffacV;
+  $('dv-ffac').style.cssText=ec;
+
+  const cmdV=10+bab+st+dx+dodge-s;
+  $('dv-cmd').textContent=cmdV;
+  $('dv-cmd').style.cssText=ec;
+
+  const wornEl=$('dv-worn-ac');if(wornEl)wornEl.textContent=wornAC?'+'+wornAC:'0';
+
+  // Saves — highlight Reflex (DEX-based) when enlarged
+  const smap={fort:'CON',ref:'DEX',will:'WIS'};
+  const stips={fort:"Your toughness save. Resists poison, disease, and physical effects. Based on CON.",
+    ref:"Your dodge save. Avoids explosions, traps, and area effects. Based on DEX.",
+    will:"Your mental save. Resists mind control, fear, and illusions. Based on WIS."};
+  const sc=$('savesCard'); sc.innerHTML='';
+  for(const[k,nm] of [['fort','Fortitude'],['ref','Reflex'],['will','Will']]){
+    const sv=S.saves[k], ab=abm(smap[k]), tot=sv.base+ab+sv.magic+sv.misc+sv.temp;
+    const saveEnl=enl&&smap[k]==='DEX';
+    const savClr=saveEnl?'color:var(--blue);font-size:1.1rem':'font-size:1.1rem';
+    sc.innerHTML+=`<div class="inline-stat"><span class="label">${nm} <span class="tip-btn" onclick="tip('${nm}','${stips[k]}')">?</span></span><span class="value cv" style="${savClr}">${ms(tot)}</span></div>
+    <div class="inline-stat" style="padding:3px 0 7px;gap:6px">
+      <span class="label" style="font-size:.7rem;color:var(--dim)">Base</span>
+      <input class="ev" type="number" value="${sv.base}" onchange="S.saves.${k}.base=+this.value||0;recalc()" style="width:38px;font-size:.85rem;padding:2px">
+      <span class="label" style="font-size:.7rem;color:var(--dim);margin-left:6px">Misc</span>
+      <input class="ev" type="number" value="${sv.misc}" onchange="S.saves.${k}.misc=+this.value||0;recalc()" style="width:38px;font-size:.85rem;padding:2px">
+      <span style="font-size:.65rem;color:${saveEnl?'var(--blue)':'var(--dim)'};margin-left:auto">${AB_FULL[smap[k]].slice(0,3)} ${ms(ab)}</span>
+    </div>`;
+  }
+  sc.innerHTML+=`<div style="margin-top:4px;padding:6px 8px;background:var(--input);border-radius:4px;font-size:.72rem;color:var(--text2);line-height:1.4">
+    <strong style="color:var(--accent)">Conditional:</strong> +3 vs poison (Hardy +2, Glory of Old +1) · +3 vs spells &amp; SLAs (Hardy +2, Glory of Old +1) · Poison Resistance +4 (class) stacks for <strong>+7 total vs poison</strong></div>`;
+
+  // ACP
+  let acp=0;
+  const armorSlot=S.slots['Armor'];
+  if(armorSlot){const a=S.gear.equip.find(x=>x.id===armorSlot);if(a)acp=a.acp||0;}
+  const shieldSlot=S.slots['Shield'];
+  if(shieldSlot){const sh=S.gear.equip.find(x=>x.id===shieldSlot);if(sh)acp+=(sh.acp||0);}
+  $('dv-acp').textContent=S.tigerForm?0:acp;
+
+  // Abilities display
+  ABILS.forEach(a=>{const e=$('ab-mod-'+a);if(e){e.textContent=ms(abm(a));
+    const hasTemp=S.abilTemp[a];
+    const hasEnlarge=enl&&(a==='STR'||a==='DEX');
+    e.style.color=(hasTemp||hasEnlarge)?'var(--blue)':''}});
+
+  // Skills — highlight DEX-based skill totals when enlarged
+  SKILLS.forEach(([name,abk])=>{
+    const sid='sk-'+name.replace(/[^a-zA-Z]/g,'');
+    if(!S.skills[sid])S.skills[sid]={ranks:0,misc:0,cs:false};
+    const sk=S.skills[sid], abMod=abm(abk), ranks=+sk.ranks||0, misc=+sk.misc||0;
+    const csB=(sk.cs&&ranks>0)?3:0;
+    let acpP=(ACP_SKILLS.includes(name)&&!S.tigerForm)?acp:0;
+    let sizeSk=(S.tigerForm&&name==='Stealth')?-4:0;
+    const tot=abMod+ranks+misc+csB+acpP+sizeSk;
+    const el=$(sid+'-total');if(el){
+      el.textContent=ms(tot);
+      el.style.color=(enl&&abk==='DEX')?'var(--blue)':'';
+    }
+  });
+  save();
+}
+
+// RENDER
+function renderApp(){
+  $('headerName').textContent=S.name||'Character';
+  $('headerInfo').textContent=`${S.race} ${S.cls} ${S.level}`;
+  $('bannerName').textContent=S.name||'Character';
+  $('bannerSub').textContent=`${S.race} ${S.cls} ${S.level}${S.deity?' · '+S.deity:''}`;
+  // Banner image
+  const banner=$('charBanner');
+  if(S.bgImage){
+    banner.innerHTML=`<img class="char-banner-img" src="${S.bgImage}" alt="">
+      <div class="char-banner-gradient" onclick="openPortrait()"></div>
+      <div class="char-banner-info"><div class="char-banner-name" id="bannerName">${S.name||'Character'}</div>
+      <div class="char-banner-sub" id="bannerSub">${S.race} ${S.cls} ${S.level}${S.deity?' · '+S.deity:''}</div></div>`;
+  } else {
+    banner.innerHTML=`<div class="char-banner-placeholder"><span>⚔</span></div>
+      <div class="char-banner-gradient"></div>
+      <div class="char-banner-info"><div class="char-banner-name" id="bannerName">${S.name||'Character'}</div>
+      <div class="char-banner-sub" id="bannerSub">${S.race} ${S.cls} ${S.level}${S.deity?' · '+S.deity:''}</div></div>`;
+  }
+  $('dv-speed').textContent=S.speed+' ft.';
+  const effSize=(S.enlarged||S.tigerForm)?'L':S.size;
+  $('dv-size').textContent={T:'Tiny',S:'Small',M:'Medium',L:'Large'}[effSize]||'Medium';
+  if(S.enlarged||S.tigerForm)$('dv-size').style.color='var(--accent)';else $('dv-size').style.color='';
+  $('dv-senses').textContent=S.senses||'—';
+  $('dv-lang').textContent=S.languages||'Common';
+  $('hpCur').textContent=S.hp; $('hpMax').textContent=S.maxHp; updHPc();
+  // Enlarge visuals (if toggle exists)
+  const eRow=$('enlargeRow'),eTog=$('enlargeToggle'),eBan=$('enlargeBanner'),hdr=document.querySelector('.app-header');
+  if(eRow){
+    if(S.enlarged){eRow.classList.add('active');eTog.classList.add('on');eBan.classList.add('show');hdr.classList.add('enlarged')}
+    else{eRow.classList.remove('active');eTog.classList.remove('on');eBan.classList.remove('show');hdr.classList.remove('enlarged')}
+  }
+  const tRow=$('tigerRow'),tTog=$('tigerToggle'),tBan=$('tigerBanner');
+  if(tRow){
+    if(S.tigerForm){tRow.classList.add('active');tTog.classList.add('on');tBan.classList.add('show');if(hdr)hdr.classList.add('enlarged')}
+    else{tRow.classList.remove('active');tTog.classList.remove('on');tBan.classList.remove('show')}
+  }
+
+  // Ability grid
+  const ag=$('abilityGrid');ag.innerHTML='';
+  ABILS.forEach(a=>{
+    const tmp=S.abilTemp[a]||0;
+    ag.innerHTML+=`<div class="ability-box" style="flex-wrap:wrap;gap:4px">
+      <span class="ab-label">${a}</span>
+      <input class="ev ab-score" id="ab-score-${a}" type="number" value="${S.abilities[a]}"
+        onchange="S.abilities['${a}']=+this.value||10;recalc()" style="width:36px;padding:2px">
+      <span style="font-size:.55rem;color:var(--dim)">tmp</span>
+      <input class="ev" id="ab-tmp-${a}" type="number" value="${tmp}"
+        onchange="S.abilTemp['${a}']=+this.value||0;recalc()" style="width:32px;padding:2px;font-size:.85rem;color:${tmp?'var(--blue)':'var(--text)'}">
+      <span class="ab-mod" id="ab-mod-${a}" style="${tmp?'color:var(--blue)':''}">${ms(abm(a))}</span>
+      <span class="tip-btn" onclick="tip('${a}','${AB_TIPS[a]}')">?</span>
+    </div>`;
+  });
+
+  // Fields
+  $('dv-xp').value=S.xp; $('dv-xpn').value=S.xpN; $('dv-bab').value=S.bab;
+  $('dv-initmisc').value=S.initMisc||0;
+  $('dv-sr').value=S.sr; $('dv-dr').value=S.dr; $('dv-gp').value=S.gp;
+  $('ac-armor').value=S.ac.armor; $('ac-shield').value=S.ac.shield;
+  $('ac-nat').value=S.ac.natural; $('ac-defl').value=S.ac.deflect;
+  $('ac-dodge').value=S.ac.dodge||0; $('ac-misc').value=S.ac.misc; $('ac-maxdex').value=S.ac.maxDex;
+  $('ac-sf').value=S.ac.spellFail; $('dv-rdmg').value=S.rdmg;
+
+  if(S.bgImage)$('charBg').style.backgroundImage=`url(${S.bgImage})`;
+
+  // Wield mode
+  document.querySelectorAll('.wield-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelector(`.wield-btn[onclick="setWield('${S.wield}')"]`)?.classList.add('active');
+
+  renderTabs(); renderGear(); renderSkills(); renderFeats(); renderAtkCards();
+  renderComp(); renderPowers(); renderDH(); syncArmorAC(); recalc();
+  // Notes
+  const nt=$('notes-text');if(nt)nt.value=S.notes||'';
+}
+
+function renderTabs(){
+  const tabs=[{id:'character',icon:'👤',l:'Char'},{id:'attack',icon:'⚔️',l:'Attack'},
+    {id:'defense',icon:'🛡️',l:'Defense'},{id:'gear',icon:'🎒',l:'Gear'},
+    {id:'skills',icon:'📜',l:'Skills'},{id:'feats',icon:'✦',l:'Feats'}];
+  if(S.hasComp)tabs.push({id:'companion',icon:'🐾',l:'Comp.'});
+  if(S.hasPow)tabs.push({id:'powers',icon:'✨',l:'Powers'});
+  tabs.push({id:'notes',icon:'📝',l:'Notes'});
+  $('tabBar').innerHTML=tabs.map(t=>
+    `<button class="tab-item ${t.id==='character'?'active':''}" data-tab="${t.id}" onclick="switchTab('${t.id}')">
+      <span class="tab-icon">${t.icon}</span>${t.l}</button>`).join('');
+}
+
+function switchTab(id){
+  document.querySelectorAll('.tab-page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab-item').forEach(t=>t.classList.remove('active'));
+  $('page-'+id)?.classList.add('active');
+  document.querySelector(`.tab-item[data-tab="${id}"]`)?.classList.add('active');
+  $('contentArea').scrollTop=0;
+}
+
+function setWield(m){S.wield=m;
+  document.querySelectorAll('.wield-btn').forEach(b=>b.classList.remove('active'));
+  event.target.classList.add('active');
+  recalc(); renderEqWeapon();
+}
+
+// HP
+function adjHP(d){S.hp=Math.max(0,S.hp+d);$('hpCur').textContent=S.hp;updHPc();save()}
+function updHPc(){const p=S.maxHp>0?S.hp/S.maxHp:0;const e=$('hpCur');
+  if(S.hp>S.maxHp) e.style.color='var(--blue)';
+  else if(p>.5) e.style.color='var(--green)';
+  else if(p>.25) e.style.color='#d4a843';
+  else e.style.color='var(--red)'}
+function adjCHP(d){S.comp.hp=Math.max(0,S.comp.hp+d);$('cHpCur').textContent=S.comp.hp;save()}
+
+// GEAR
+function showGS(s){document.querySelectorAll('.gear-sub').forEach(x=>x.classList.add('hidden'));
+  $('gs-'+s).classList.remove('hidden');
+  document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));event.target.classList.add('active')}
+
+function renderGear(){
+  // Weapons
+  const wl=$('gearWeaponsList');wl.innerHTML='';
+  S.gear.weapons.forEach((w,i)=>{
+    const isMain=S.equippedWeapons.main===w.id, isOff=S.equippedWeapons.off===w.id;
+    wl.innerHTML+=`<div class="gear-item" style="flex-wrap:wrap">
+      <div style="display:flex;gap:3px;flex-shrink:0">
+        <button style="font-size:.6rem;padding:3px 6px;border-radius:3px;border:1px solid ${isMain?'var(--accent)':'var(--border)'};background:${isMain?'var(--accent-glow)':'var(--input)'};color:${isMain?'var(--accent)':'var(--dim)'};font-family:'Cinzel',serif;cursor:pointer;text-transform:uppercase;letter-spacing:.5px" onclick="togWpnEquip('${w.id}','main')">Main</button>
+        <button style="font-size:.6rem;padding:3px 6px;border-radius:3px;border:1px solid ${isOff?'var(--accent)':'var(--border)'};background:${isOff?'var(--accent-glow)':'var(--input)'};color:${isOff?'var(--accent)':'var(--dim)'};font-family:'Cinzel',serif;cursor:pointer;text-transform:uppercase;letter-spacing:.5px" onclick="togWpnEquip('${w.id}','off')">Off</button>
+      </div>
+      <span class="gear-item-name">${w.name}
+        <span style="font-size:.72rem;color:var(--dim)">${w.damage||''} ${w.crit||''} ${w.damageType||''}</span></span>
+      <span class="gear-item-weight">${w.weight||0} lb</span>
+      <button class="gear-item-remove" onclick="rmGear('weapons',${i})">×</button>
+    </div>`;
+  });
+
+  // Equipment slots
+  const sg=$('slotGrid');sg.innerHTML='';
+  SLOTS.forEach(slot=>{
+    const itemId=S.slots[slot];
+    const item=itemId?S.gear.equip.find(x=>x.id===itemId):null;
+    let detail='';
+    if(item){
+      const parts=[];
+      if(item.bonus) parts.push('+'+item.bonus+' AC');
+      if(item.properties) parts.push(item.properties);
+      detail=parts.join(' · ');
+    }
+    sg.innerHTML+=`<div class="slot-box ${item?'filled':''}" onclick="${item?`viewEquipItem('${item.id}','${slot}')`:`openSlotPick('${slot}')`}">
+      <div class="slot-label">${slot}</div>
+      <div class="slot-item ${item?'':'empty'}">${item?item.name:'Empty'}</div>
+      ${detail?`<div style="font-size:.65rem;color:var(--accent);margin-top:1px">${detail}</div>`:''}
+    </div>`;
+  });
+
+  // Unequipped equip items
+  const el=$('gearEquipList');el.innerHTML='';
+  const equipped=new Set(Object.values(S.slots).filter(Boolean));
+  S.gear.equip.forEach((item,i)=>{
+    if(equipped.has(item.id)) return;
+    const parts=[];
+    if(item.bonus) parts.push('+'+item.bonus+' AC');
+    if(item.armorType) parts.push(item.armorType);
+    if(item.acp) parts.push('ACP '+item.acp);
+    if(item.spellFail) parts.push(item.spellFail+'% SF');
+    if(item.properties) parts.push(item.properties);
+    const info=parts.join(' · ');
+    el.innerHTML+=`<div class="gear-item" style="flex-wrap:wrap">
+      <span class="gear-item-name">${item.name} ${info?`<span style="font-size:.7rem;color:var(--dim)">${info}</span>`:''}</span>
+      <span class="gear-item-weight">${item.weight||0} lb</span>
+      <button class="gear-item-remove" onclick="rmGear('equip',${i})">×</button>
+    </div>`;
+  });
+
+  // Other
+  const ol=$('gearOtherList');ol.innerHTML='';
+  S.gear.other.forEach((item,i)=>{
+    ol.innerHTML+=`<div class="gear-item">
+      <span class="gear-item-name">${item.name} ${item.properties?'<span style="font-size:.72rem;color:var(--dim)">'+item.properties+'</span>':''}</span>
+      <span class="gear-item-weight">${item.weight||0} lb</span>
+      <button class="gear-item-remove" onclick="rmGear('other',${i})">×</button>
+    </div>`;
+  });
+
+  renderEqWeapon(); renderEqArmor();
+}
+
+function togWpnEquip(wid,hand){
+  if(hand==='main') S.equippedWeapons.main=S.equippedWeapons.main===wid?null:wid;
+  else S.equippedWeapons.off=S.equippedWeapons.off===wid?null:wid;
+  // Can't have same weapon in both hands
+  if(hand==='main'&&S.equippedWeapons.off===wid) S.equippedWeapons.off=null;
+  if(hand==='off'&&S.equippedWeapons.main===wid) S.equippedWeapons.main=null;
+  renderGear();recalc();
+}
+
+function rmGear(cat,i){
+  const item=S.gear[cat][i];
+  if(cat==='weapons'){
+    if(S.equippedWeapons.main===item.id) S.equippedWeapons.main=null;
+    if(S.equippedWeapons.off===item.id) S.equippedWeapons.off=null;
+  }
+  if(cat==='equip'){
+    for(const slot of SLOTS){if(S.slots[slot]===item.id)delete S.slots[slot]}
+  }
+  S.gear[cat].splice(i,1); renderGear(); recalc();
+}
+
+function viewEquipItem(itemId,slot){
+  const item=S.gear.equip.find(x=>x.id===itemId);
+  if(!item)return;
+  let details='';
+  if(item.bonus) details+=`<div class="inline-stat"><span class="label">AC Bonus</span><span class="value">+${item.bonus}</span></div>`;
+  if(item.armorType) details+=`<div class="inline-stat"><span class="label">Type</span><span class="value">${item.armorType}</span></div>`;
+  if(item.maxDex!=null&&item.maxDex<99) details+=`<div class="inline-stat"><span class="label">Max DEX</span><span class="value">+${item.maxDex}</span></div>`;
+  if(item.acp) details+=`<div class="inline-stat"><span class="label">Check Penalty</span><span class="value">${item.acp}</span></div>`;
+  if(item.spellFail) details+=`<div class="inline-stat"><span class="label">Spell Failure</span><span class="value">${item.spellFail}%</span></div>`;
+  if(item.weight) details+=`<div class="inline-stat"><span class="label">Weight</span><span class="value">${item.weight} lb</span></div>`;
+  if(item.properties) details+=`<div class="inline-stat"><span class="label">Properties</span><span class="value" style="font-size:.8rem;text-align:right;max-width:55%">${item.properties}</span></div>`;
+  showMod(`<div class="modal-title">${item.name}</div>
+    <div style="font-size:.7rem;color:var(--dim);margin-bottom:10px;text-transform:uppercase">Equipped: ${slot}</div>
+    <div class="stat-card">${details||'<div style="color:var(--dim);font-style:italic">No additional stats.</div>'}</div>
+    <div class="modal-actions">
+      <button class="modal-btn secondary" onclick="assignSlot('${slot}',null);closeMod()">Unequip</button>
+      <button class="modal-btn secondary" onclick="closeMod();openSlotPick('${slot}')">Swap</button>
+      <button class="modal-btn primary" onclick="closeMod()">Close</button>
+    </div>`);
+}
+
+function openSlotPick(slot){
+  const items=S.gear.equip;
+  let opts=items.map((item,i)=>`<div class="gear-item" style="cursor:pointer" onclick="assignSlot('${slot}','${item.id}')">
+    <span class="gear-item-name">${item.name}</span></div>`).join('');
+  opts+=`<div class="gear-item" style="cursor:pointer" onclick="assignSlot('${slot}',null)">
+    <span class="gear-item-name" style="color:var(--dim);font-style:italic">Remove / Empty</span></div>`;
+  showMod(`<div class="modal-title">Assign to ${slot}</div>${opts}`);
+}
+
+function assignSlot(slot,itemId){
+  // Remove item from any other slot first
+  if(itemId){for(const s of SLOTS){if(S.slots[s]===itemId)delete S.slots[s]}}
+  if(itemId) S.slots[slot]=itemId; else delete S.slots[slot];
+  // Sync AC from armor/shield slots
+  syncArmorAC();
+  closeMod(); renderGear(); recalc();
+}
+
+function renderEqWeapon(){
+  const c=$('equippedWeaponCard');
+  const mainW=S.equippedWeapons.main?S.gear.weapons.find(x=>x.id===S.equippedWeapons.main):null;
+  const offW=S.equippedWeapons.off?S.gear.weapons.find(x=>x.id===S.equippedWeapons.off):null;
+  if(!mainW&&!offW){c.innerHTML='<div style="color:var(--dim);font-style:italic;font-size:.9rem">No weapon equipped. Tap a weapon in Gear to assign it, or use settings below.</div>';return;}
+  let h='';
+  const renderW=(w,label)=>{
+    h+=`<div style="font-weight:700;font-size:.95rem;margin-bottom:4px;color:var(--accent)">${label}: ${w.name}</div>
+    <div class="inline-stat"><span class="label">Damage</span><span class="value">${w.damage||'—'}</span></div>
+    <div class="inline-stat"><span class="label">Critical</span><span class="value">${w.crit||'20/×2'}</span></div>
+    <div class="inline-stat"><span class="label">Type</span><span class="value">${w.damageType||'—'}</span></div>
+    ${w.range?`<div class="inline-stat"><span class="label">Range</span><span class="value">${w.range}</span></div>`:''}
+    ${w.ammo!=null?`<div class="inline-stat"><span class="label">Ammo</span><span class="value" style="display:flex;align-items:center;gap:4px">
+      <button class="hp-btn minus" style="width:22px;height:22px;font-size:.9rem" onclick="adjAmmo('${w.id}',-1)">−</button>
+      <span id="ammo-${w.id}">${w.ammo}</span>
+      <button class="hp-btn plus" style="width:22px;height:22px;font-size:.9rem" onclick="adjAmmo('${w.id}',1)">+</button>
+    </span></div>`:''}
+    ${w.properties?`<div class="inline-stat"><span class="label">Properties</span><span class="value" style="font-size:.78rem;text-align:right;max-width:55%">${w.properties}</span></div>`:''}`;
+  };
+  if(mainW) renderW(mainW, S.wield==='twohanded'?'Two-Handed':'Main Hand');
+  if(offW&&S.wield==='dualwield') renderW(offW,'Off Hand');
+  c.innerHTML=h;
+}
+
+function adjAmmo(wid,d){const w=S.gear.weapons.find(x=>x.id===wid);if(!w||w.ammo==null)return;
+  w.ammo=Math.max(0,w.ammo+d);const e=$('ammo-'+wid);if(e)e.textContent=w.ammo;save()}
+
+function renderEqArmor(){
+  const c=$('eqArmorCard');
+  const armorItem=S.slots['Armor']?S.gear.equip.find(x=>x.id===S.slots['Armor']):null;
+  const shieldItem=S.slots['Shield']?S.gear.equip.find(x=>x.id===S.slots['Shield']):null;
+  if(!armorItem&&!shieldItem){c.innerHTML='<div style="color:var(--dim);font-style:italic;font-size:.9rem">No armor equipped.</div>';return;}
+  let h='';
+  const renderA=(a,label)=>{
+    h+=`<div style="font-weight:700;font-size:.95rem;margin-bottom:4px">${label}: ${a.name}</div>
+    <div class="inline-stat"><span class="label">AC Bonus</span><span class="value">+${a.bonus||0}</span></div>
+    <div class="inline-stat"><span class="label">Type</span><span class="value">${a.armorType||'—'}</span></div>
+    <div class="inline-stat"><span class="label">Max DEX</span><span class="value">${a.maxDex!=null?'+'+a.maxDex:'—'}</span></div>
+    <div class="inline-stat"><span class="label">Check Penalty</span><span class="value">${a.acp||0}</span></div>
+    <div class="inline-stat"><span class="label">Spell Failure</span><span class="value">${a.spellFail||0}%</span></div>`;
+  };
+  if(armorItem) renderA(armorItem,'Armor');
+  if(shieldItem) renderA(shieldItem,'Shield');
+  c.innerHTML=h;
+}
+
+// SKILLS
+function renderSkills(){
+  const l=$('skillsList');l.innerHTML='';
+  SKILLS.forEach(([name,abk])=>{
+    const sid='sk-'+name.replace(/[^a-zA-Z]/g,'');
+    if(!S.skills[sid])S.skills[sid]={ranks:0,misc:0,cs:false};
+    const sk=S.skills[sid];
+    l.innerHTML+=`<div class="skill-row">
+      <div class="skill-cs ${sk.cs?'checked':''}" onclick="togCS('${sid}')">${sk.cs?'CS':'CS'}</div>
+      <span class="skill-name">${name} <span style="font-size:.65rem;color:var(--dim)">${abk}</span></span>
+      <input class="ev" id="${sid}-ranks" type="number" value="${sk.ranks}"
+        onchange="S.skills['${sid}'].ranks=+this.value||0;recalc()" style="width:30px;padding:2px;font-size:.85rem">
+      <input class="ev" id="${sid}-misc" type="number" value="${sk.misc}"
+        onchange="S.skills['${sid}'].misc=+this.value||0;recalc()" style="width:30px;padding:2px;font-size:.85rem">
+      <span class="skill-total" id="${sid}-total">+0</span>
+    </div>`;
+  });
+}
+function togCS(sid){S.skills[sid].cs=!S.skills[sid].cs;renderSkills();recalc()}
+
+// FEATS
+function renderFeats(){
+  ['always','combat','special','companion'].forEach(cat=>{
+    const c=$('feats-'+cat);if(!c)return;c.innerHTML='';
+    (S.feats[cat]||[]).forEach((f,i)=>{
+      c.innerHTML+=`<div class="feat-item"><div style="display:flex;justify-content:space-between;align-items:start">
+        <div class="feat-item-name">${f.name}</div>
+        <button class="gear-item-remove" onclick="S.feats['${cat}'].splice(${i},1);renderFeats();save()">×</button>
+      </div>${f.desc?`<div class="feat-item-desc">${f.desc}</div>`:''}</div>`;
+    });
+  });
+}
+function toggleFS(cat){$('feats-'+cat).classList.toggle('collapsed');$('chev-'+cat).classList.toggle('open')}
+
+// ATTACK CARDS
+function renderAtkCards(){
+  const c=$('atkCards');c.innerHTML='';
+  if(!S.atkCards.length){c.innerHTML='<div style="color:var(--dim);font-style:italic;font-size:.9rem">No attack cards yet.</div>';$('atkCardsHint').style.display='none';}
+  else{$('atkCardsHint').style.display='block';}
+  S.atkCards.forEach((card,i)=>{
+    const bgS=card.bgImg?`background-image:linear-gradient(135deg,rgba(35,32,27,.88),rgba(35,32,27,.92)),url(${card.bgImg});background-size:cover;background-position:center;`:'';
+    c.innerHTML+=`<div class="attack-card" style="${bgS}" onclick="openCardView('player',${i})"><div class="attack-card-header" style="display:flex;justify-content:space-between">
+      ${card.name}<button class="gear-item-remove" onclick="event.stopPropagation();confirmDeleteCard('player',${i})">×</button></div>
+      <div class="attack-card-body">${card.body.replace(/\n/g,'<br>')}</div></div>`;
+  });
+  const cc=$('compAtkCards');if(cc){cc.innerHTML='';
+    if(!S.compAtkCards.length){cc.innerHTML='<div style="color:var(--dim);font-style:italic;font-size:.9rem">No companion attacks.</div>';
+      const h=$('compAtkCardsHint');if(h)h.style.display='none';}
+    else{const h=$('compAtkCardsHint');if(h)h.style.display='block';}
+    S.compAtkCards.forEach((card,i)=>{
+      const bgS=card.bgImg?`background-image:linear-gradient(135deg,rgba(35,32,27,.88),rgba(35,32,27,.92)),url(${card.bgImg});background-size:cover;background-position:center;`:'';
+      cc.innerHTML+=`<div class="attack-card" style="${bgS}" onclick="openCardView('companion',${i})"><div class="attack-card-header" style="display:flex;justify-content:space-between">
+        ${card.name}<button class="gear-item-remove" onclick="event.stopPropagation();confirmDeleteCard('companion',${i})">×</button></div>
+        <div class="attack-card-body">${card.body.replace(/\n/g,'<br>')}</div></div>`;
+    });
+  }
+}
+
+function confirmDeleteCard(type, idx){
+  const cards = type==='companion' ? S.compAtkCards : S.atkCards;
+  const card = cards[idx];
+  if(!card) return;
+  showMod(`<div class="modal-title">Delete Attack Card</div>
+    <div style="color:var(--text2);margin:12px 0">Remove <strong style="color:var(--accent)">${card.name}</strong>? This cannot be undone.</div>
+    <div class="modal-actions"><button class="modal-btn secondary" onclick="closeMod()">Cancel</button>
+    <button class="modal-btn primary" style="background:var(--red)" onclick="doDeleteCard('${type}',${idx})">Delete</button></div>`);
+}
+function doDeleteCard(type, idx){
+  if(type==='companion') S.compAtkCards.splice(idx,1);
+  else S.atkCards.splice(idx,1);
+  renderAtkCards(); save(); closeMod();
+}
+
+// FULLSCREEN CARD VIEW
+let cardViewCards=[], cardViewIdx=0, cardTouchX=0;
+function openCardView(type,startIdx){
+  cardViewCards = type==='companion' ? S.compAtkCards : S.atkCards;
+  if(!cardViewCards.length) return;
+  cardViewIdx=startIdx||0;
+  renderCardView();
+  $('cardOverlay').classList.add('open');
+}
+function closeCardView(){$('cardOverlay').classList.remove('open')}
+
+function renderCardView(){
+  const car=$('cardCarousel');
+  car.innerHTML=cardViewCards.map((card,i)=>{
+    const pos=i===cardViewIdx?'active':i<cardViewIdx?'left':'right';
+    const bgStyle=card.bgImg?`background-image:url(${card.bgImg});background-size:cover;background-position:center;`:'';
+    return `<div class="card-slide ${pos}">
+      <div class="card-fullscreen">
+        <div class="card-fs-bg" style="${bgStyle}"></div>
+        <div class="card-fs-content">
+          <div class="card-fs-title">${card.name}</div>
+          <div class="card-fs-body">${card.body.replace(/\n/g,'\n')}</div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+  const pips=$('cardPips');
+  pips.innerHTML=cardViewCards.map((_,i)=>
+    `<div class="card-pip ${i===cardViewIdx?'active':''}"></div>`).join('');
+}
+
+function cardNav(dir){
+  const next=cardViewIdx+dir;
+  if(next<0||next>=cardViewCards.length) return;
+  cardViewIdx=next;
+  renderCardView();
+}
+
+// Touch swipe for cards
+document.addEventListener('DOMContentLoaded',()=>{
+  const car=$('cardCarousel');
+  if(!car) return;
+  car.addEventListener('touchstart',e=>{cardTouchX=e.touches[0].clientX},{passive:true});
+  car.addEventListener('touchend',e=>{
+    const dx=e.changedTouches[0].clientX-cardTouchX;
+    if(Math.abs(dx)>50){
+      if(dx<0) cardNav(1); // swipe left = next
+      else cardNav(-1); // swipe right = prev
+    }
+  },{passive:true});
+  // Mouse fallback
+  let mouseDown=false,mouseX=0;
+  car.addEventListener('mousedown',e=>{mouseDown=true;mouseX=e.clientX});
+  car.addEventListener('mouseup',e=>{
+    if(!mouseDown) return; mouseDown=false;
+    const dx=e.clientX-mouseX;
+    if(Math.abs(dx)>50){if(dx<0)cardNav(1);else cardNav(-1);}
+  });
+});
+
+// COMPANION
+function renderComp(){
+  if(!S.hasComp)return;
+  // Companion portrait
+  const pw=$('compPortraitWrap');
+  if(pw && COMP_IMG){
+    pw.innerHTML=`<img class="comp-portrait" src="${COMP_IMG}" alt="${S.comp.name||'Companion'}" onclick="openCompPortrait()">`;
+  }
+  $('comp-name').value=S.comp.name;$('comp-type').value=S.comp.type;
+  $('cHpCur').textContent=S.comp.hp;$('cHpMax').textContent=S.comp.maxHp;
+  $('comp-ac').value=S.comp.ac;$('comp-spd').value=S.comp.speed;
+  $('comp-fort').value=S.comp.fort;$('comp-ref').value=S.comp.ref;$('comp-will').value=S.comp.will;
+  const g=$('compAbGrid');g.innerHTML='';
+  ABILS.forEach(a=>{const sc=S.comp.abilities[a]||10;
+    g.innerHTML+=`<div class="ability-box"><span class="ab-label">${a}</span>
+      <input class="ev" type="number" value="${sc}" onchange="S.comp.abilities['${a}']=+this.value||10;save()" style="width:38px">
+      <span class="ab-mod">${ms(mod(sc))}</span></div>`;
+  });
+}
+
+// POWERS
+function renderPowers(){
+  if(!S.hasPow)return;
+  // --- Daily resources as tappable pips ---
+  const rs=$('resSec');
+  if(rs){
+    if(!S.resources||!S.resources.length){
+      rs.innerHTML='<div style="color:var(--dim);font-style:italic;font-size:.85rem">No tracked resources.</div>';
+    } else {
+      let html='';
+      S.resources.forEach((r,ri)=>{
+        const remaining=r.max-r.used;
+        let pips='';
+        for(let i=0;i<r.max;i++){
+          const on=i<remaining;
+          pips+=`<span onclick="togRes(${ri},${i})" style="display:inline-block;width:18px;height:18px;border-radius:50%;margin:3px;cursor:pointer;border:2px solid var(--accent);background:${on?'var(--accent)':'transparent'}"></span>`;
+        }
+        html+=`<div style="margin-bottom:12px"><div style="font-size:.85rem;color:var(--text);margin-bottom:2px">${r.name} <span style="color:var(--dim);font-size:.72rem">${remaining}/${r.max}</span></div><div style="display:flex;flex-wrap:wrap">${pips}</div></div>`;
+      });
+      rs.innerHTML=html;
+    }
+  }
+  // --- Prepared spells (assign / cast / restore) ---
+  const sc=$('spellSec');
+  if(sc){
+  sc.innerHTML='';
+  if(!S.preparedExtracts||!S.preparedExtracts.length){
+    sc.innerHTML='<div style="color:var(--dim);font-style:italic;font-size:.85rem">No spells prepared. Hit \u201cNew Day\u201d to prepare today\'s spells.</div>';
+  } else {
+    S.spellLevels.forEach((sl)=>{
+      const prepared=S.preparedExtracts.filter(e=>e.level===sl.level);
+      if(!prepared.length)return;
+      const isCantrip=sl.level===0;
+      const active=prepared.filter(e=>!e.consumed).length;
+      const header=isCantrip?'Cantrips \u2014 at-will':('Level '+sl.level+' \u2014 '+active+' remaining');
+      sc.innerHTML+=`<div class="extract-level-header">${header}</div>`;
+      let items='';
+      prepared.forEach(e=>{
+        const gi=S.preparedExtracts.indexOf(e);
+        items+=`<span class="extract-item${e.consumed?' consumed':''}" onclick="consumeExtract(${gi})">${e.name}</span>`;
+      });
+      sc.innerHTML+=`<div style="display:flex;flex-wrap:wrap;margin-bottom:6px">${items}</div>`;
+    });
+  }
+  }
+}
+function togRes(ri,i){
+  const r=S.resources[ri];if(!r)return;
+  const remaining=r.max-r.used;
+  if(i<remaining){r.used=r.max-i;}else{r.used=r.max-i-1;}
+  if(r.used<0)r.used=0;if(r.used>r.max)r.used=r.max;
+  renderPowers();save();
+}
+function consumeExtract(idx){
+  const e=S.preparedExtracts[idx];if(!e)return;
+  const desc=FORMULA_DESCS[e.name]||'No description available.';
+  if(e.level===0){
+    showMod(`<div class="modal-title">${e.name} <span style="font-size:.7rem;color:var(--dim)">(Cantrip)</span></div>
+      <div style="color:var(--text2);margin:10px 0;font-size:.9rem;line-height:1.5">${desc}</div>
+      <div class="modal-actions"><button class="modal-btn primary" onclick="closeMod()">Close</button></div>`);
+    return;
+  }
+  const verb=e.consumed?'Restore Slot':'Cast Spell';
+  showMod(`<div class="modal-title">${e.name} <span style="font-size:.7rem;color:var(--dim)">(Level ${e.level})</span></div>
+    <div style="color:var(--text2);margin:10px 0;font-size:.9rem;line-height:1.5">${desc}</div>
+    <div class="modal-actions">
+      <button class="modal-btn secondary" onclick="closeMod()">Cancel</button>
+      <button class="modal-btn primary" onclick="doConsumeExtract(${idx})">${verb}</button>
+    </div>`);
+}
+function doConsumeExtract(idx){
+  const e=S.preparedExtracts[idx];if(!e)return;
+  e.consumed=!e.consumed; // toggle, so an accidental cast can be undone
+  closeMod();renderPowers();save();
+}
+function newDay(){
+  S.resources.forEach(r=>r.used=0);
+  if(!$('spellSec')){ renderPowers(); save(); return; }
+  let html='<div class="modal-title">Prepare Spells</div>';
+  html+='<div style="color:var(--text2);font-size:.85rem;margin-bottom:12px">Choose what to prepare in each slot.</div>';
+  S.spellLevels.forEach((sl)=>{
+    const known=(sl.spells||'').split(',').map(s=>s.trim()).filter(s=>s);
+    const opts=known.map(k=>`<option value="${k}">${k}</option>`).join('');
+    const lbl=sl.level===0?'Cantrips':'Level '+sl.level;
+    html+=`<div class="prep-modal-level"><h4>${lbl} \u2014 ${sl.slots} slots</h4>`;
+    for(let i=0;i<sl.slots;i++){
+      html+=`<div class="prep-slot"><span style="color:var(--dim);font-size:.75rem;width:20px">${i+1}.</span><select id="prep-${sl.level}-${i}">${opts}</select></div>`;
+    }
+    html+='</div>';
+  });
+  html+='<div class="modal-actions"><button class="modal-btn primary" onclick="confirmPrep()">Prepare &amp; Start Day</button></div>';
+  showMod(html);
+}
+function confirmPrep(){
+  S.preparedExtracts=[];
+  S.spellLevels.forEach(sl=>{
+    for(let i=0;i<sl.slots;i++){
+      const sel=$('prep-'+sl.level+'-'+i);
+      if(sel&&sel.value) S.preparedExtracts.push({level:sl.level,name:sel.value,consumed:false});
+    }
+  });
+  closeMod();renderPowers();save();
+}
+function longRest(){newDay()}
+
+// DICE
+function toggleDice(){$('diceOvl').classList.toggle('open')}
+function roll(sides){
+  const m=+$('diceMod').value||0;const re=$('diceRes'),br=$('diceBrk');
+  re.classList.add('rolling');let t=0;
+  const iv=setInterval(()=>{re.textContent=Math.floor(Math.random()*sides*diceN)+1;t++;
+    if(t>8){clearInterval(iv);re.classList.remove('rolling');
+      const rolls=[];for(let i=0;i<diceN;i++)rolls.push(Math.floor(Math.random()*sides)+1);
+      const sum=rolls.reduce((a,b)=>a+b,0),total=sum+m;
+      re.textContent=total;re.style.transform='scale(1.15)';setTimeout(()=>re.style.transform='scale(1)',150);
+      const ms2=m!==0?(m>0?'+'+m:m):'';
+      br.textContent=diceN>1?`[${rolls.join(', ')}]${ms2?' '+ms2:''} = ${total}`:`d${sides}${ms2} = ${total}`;
+      S.diceHist.unshift({expr:`${diceN}d${sides}${ms2}`,result:total,time:Date.now()});
+      if(S.diceHist.length>20)S.diceHist.pop();renderDH();save();
+    }
+  },50);
+}
+function renderDH(){$('diceHist').innerHTML=S.diceHist.map(h=>`<div class="dice-history-item">${h.expr} → <strong style="color:var(--accent)">${h.result}</strong></div>`).join('')}
+
+// TOOLTIP
+function tip(title,text){$('tipT').textContent=title;$('tipX').textContent=text;$('tipOvl').classList.add('show')}
+function openPortrait(){if(!S.bgImage)return;$('portraitImg').src=S.bgImage;$('portraitOvl').classList.add('show')}
+function openCompPortrait(){if(!COMP_IMG)return;$('portraitImg').src=COMP_IMG;$('portraitOvl').classList.add('show')}
+
+// MODAL
+function closeMod(){$('modOvl').classList.remove('show')}
+function showMod(html){$('modBox').innerHTML=html;$('modOvl').classList.add('show')}
+
+function openAddGear(cat){
+  let f='';
+  if(cat==='weapons'){
+    f=`<div class="modal-field"><label>Name</label><input id="m-name"></div>
+    <div class="modal-field"><label>Damage</label><input id="m-dmg" placeholder="1d8"></div>
+    <div class="modal-field"><label>Critical</label><input id="m-crit" value="20/×2"></div>
+    <div class="modal-field"><label>Damage Type (S/P/B)</label><input id="m-dtype"></div>
+    <div class="modal-field"><label>Range (blank=melee)</label><input id="m-range"></div>
+    <div class="modal-field"><label>Ammo (blank=N/A)</label><input id="m-ammo" type="number"></div>
+    <div class="modal-field"><label>Weight</label><input id="m-wt" type="number" value="0"></div>
+    <div class="modal-field"><label>Properties</label><input id="m-props" placeholder="Masterwork, etc."></div>
+    <div class="modal-field"><label>Equip As</label><select id="m-eqas"><option value="">Don't equip</option>
+      <option value="main">Main Hand</option><option value="off">Off Hand</option></select></div>`;
+  } else if(cat==='equip'){
+    f=`<div class="modal-field"><label>Name</label><input id="m-name"></div>
+    <div class="modal-field"><label>Slot</label><select id="m-slot">${SLOTS.map(s=>`<option value="${s}">${s}</option>`).join('')}<option value="">None (unslotted)</option></select></div>
+    <div class="modal-field"><label>AC Bonus (armor/shield only)</label><input id="m-bonus" type="number" value="0"></div>
+    <div class="modal-field"><label>Type (Light/Medium/Heavy/Shield)</label><input id="m-atype" value="Light"></div>
+    <div class="modal-field"><label>Max DEX</label><input id="m-maxdex" type="number" value="99"></div>
+    <div class="modal-field"><label>Armor Check Penalty</label><input id="m-acp" type="number" value="0"></div>
+    <div class="modal-field"><label>Spell Failure %</label><input id="m-sf" type="number" value="0"></div>
+    <div class="modal-field"><label>Weight</label><input id="m-wt" type="number" value="0"></div>
+    <div class="modal-field"><label>Properties</label><input id="m-props"></div>`;
+  } else {
+    f=`<div class="modal-field"><label>Name</label><input id="m-name"></div>
+    <div class="modal-field"><label>Weight</label><input id="m-wt" type="number" value="0"></div>
+    <div class="modal-field"><label>Notes</label><input id="m-props"></div>`;
+  }
+  showMod(`<div class="modal-title">Add ${cat==='weapons'?'Weapon':cat==='equip'?'Armor/Worn Item':'Equipment'}</div>${f}
+    <div class="modal-actions"><button class="modal-btn secondary" onclick="closeMod()">Cancel</button>
+    <button class="modal-btn primary" onclick="confirmGear('${cat}')">Add</button></div>`);
+}
+
+function confirmGear(cat){
+  const name=$('m-name')?.value;if(!name)return;
+  const id='g_'+Date.now(), wt=+$('m-wt')?.value||0, props=$('m-props')?.value||'';
+  if(cat==='weapons'){
+    const ammoV=$('m-ammo')?.value;
+    const w={id,name,weight:wt,properties:props,damage:$('m-dmg')?.value||'',
+      crit:$('m-crit')?.value||'20/×2',damageType:$('m-dtype')?.value||'',
+      range:$('m-range')?.value||'',ammo:ammoV!==''?+ammoV:null};
+    S.gear.weapons.push(w);
+    const eqAs=$('m-eqas')?.value;
+    if(eqAs==='main')S.equippedWeapons.main=id;
+    else if(eqAs==='off')S.equippedWeapons.off=id;
+  } else if(cat==='equip'){
+    const item={id,name,weight:wt,properties:props,
+      bonus:+$('m-bonus')?.value||0,armorType:$('m-atype')?.value||'',
+      maxDex:+$('m-maxdex')?.value,acp:+$('m-acp')?.value||0,
+      spellFail:+$('m-sf')?.value||0,slotType:$('m-slot')?.value||''};
+    S.gear.equip.push(item);
+    const slot=$('m-slot')?.value;
+    if(slot)S.slots[slot]=id;
+  } else {
+    S.gear.other.push({id,name,weight:wt,properties:props});
+  }
+  closeMod();renderGear();recalc();
+}
+
+function openAddCard(target){
+  showMod(`<div class="modal-title">Add Attack Card</div>
+    <div class="modal-field"><label>Name</label><input id="m-cn" placeholder="LONGBOW ATTACK"></div>
+    <div class="modal-field"><label>Body</label><textarea id="m-cb" style="height:120px" placeholder="To Hit:\n1d20 + BAB + DEX\n\nDamage:\n1d8 + STR"></textarea></div>
+    <div class="modal-actions"><button class="modal-btn secondary" onclick="closeMod()">Cancel</button>
+    <button class="modal-btn primary" onclick="confirmCard('${target}')">Add</button></div>`);
+}
+function confirmCard(t){const n=$('m-cn')?.value,b=$('m-cb')?.value;if(!n)return;
+  const c={name:n,body:b||''};if(t==='companion')S.compAtkCards.push(c);else S.atkCards.push(c);
+  closeMod();renderAtkCards();save()}
+
+function openAddFeat(cat){
+  showMod(`<div class="modal-title">Add ${cat==='companion'?'Companion Ability':'Feat / Feature'}</div>
+    <div class="modal-field"><label>Name</label><input id="m-fn"></div>
+    <div class="modal-field"><label>Description</label><textarea id="m-fd"></textarea></div>
+    <div class="modal-actions"><button class="modal-btn secondary" onclick="closeMod()">Cancel</button>
+    <button class="modal-btn primary" onclick="confirmFeat('${cat}')">Add</button></div>`);
+}
+function confirmFeat(cat){const n=$('m-fn')?.value;if(!n)return;
+  S.feats[cat].push({name:n,desc:$('m-fd')?.value||''});closeMod();renderFeats();save()}
+
+function openAddRes(){
+  showMod(`<div class="modal-title">Add Daily Resource</div>
+    <div class="modal-field"><label>Name</label><input id="m-rn" placeholder="Ki Points, Channel Energy"></div>
+    <div class="modal-field"><label>Uses Per Day</label><input id="m-rm" type="number" value="3"></div>
+    <div class="modal-actions"><button class="modal-btn secondary" onclick="closeMod()">Cancel</button>
+    <button class="modal-btn primary" onclick="confirmRes()">Add</button></div>`);
+}
+function confirmRes(){const n=$('m-rn')?.value,m=+$('m-rm')?.value||1;if(!n)return;
+  S.resources.push({name:n,max:m,used:0});closeMod();renderPowers();save()}
+
+function openAddSL(){
+  showMod(`<div class="modal-title">Add Spell Level</div>
+    <div class="modal-field"><label>Level (0=orisons)</label><input id="m-sl" type="number" value="1" min="0" max="9"></div>
+    <div class="modal-field"><label>Slots Per Day</label><input id="m-ss" type="number" value="3"></div>
+    <div class="modal-field"><label>Spells Known</label><textarea id="m-sp" placeholder="Shield of Faith, Bless"></textarea></div>
+    <div class="modal-actions"><button class="modal-btn secondary" onclick="closeMod()">Cancel</button>
+    <button class="modal-btn primary" onclick="confirmSL()">Add</button></div>`);
+}
+function confirmSL(){const lv=+$('m-sl')?.value||0,sl=+$('m-ss')?.value||1,sp=$('m-sp')?.value||'';
+  S.spellLevels.push({level:lv,slots:sl,used:0,spells:sp});
+  S.spellLevels.sort((a,b)=>a.level-b.level);closeMod();renderPowers();save()}
+
+// SETTINGS
+
+// ===== THEME LIBRARY (shared across all party sheets) =====
+const THEMES={
+  wyldwood:{name:'Wyldwood',v:{'--bg':'#141a16','--card':'#1b2320','--input':'#242e28','--accent':'#6aad7b','--accent-dim':'#3d7a50','--accent-glow':'rgba(106,173,123,.15)','--text':'#dce8e0','--text2':'#8ca898','--dim':'#566d5e','--border':'#2e3a33','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  nightshade:{name:'Nightshade',v:{'--bg':'#1a1220','--card':'#221a30','--input':'#2e223e','--accent':'#9b59b6','--accent-dim':'#7d3c98','--accent-glow':'rgba(155,89,182,.15)','--text':'#e8e0d0','--text2':'#a89e8c','--dim':'#6d6456','--border':'#3a352e','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  stormglass:{name:'Stormglass',v:{'--bg':'#1a1714','--card':'#23201b','--input':'#2e2a24','--accent':'#6b8eb5','--accent-dim':'#3d5f82','--accent-glow':'rgba(107,142,181,.15)','--text':'#e8e0d0','--text2':'#a89e8c','--dim':'#6d6456','--border':'#3a352e','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  duskwatch:{name:'Duskwatch',v:{'--bg':'#121820','--card':'#1a2230','--input':'#222e3e','--accent':'#5b8ab4','--accent-dim':'#3d6e94','--accent-glow':'rgba(91,138,180,.15)','--text':'#dce4ec','--text2':'#8ca4b8','--dim':'#566d82','--border':'#2e3a4a','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  emberfall:{name:'Emberfall',v:{'--bg':'#1a1714','--card':'#23201b','--input':'#2e2a24','--accent':'#c44040','--accent-dim':'#8a2c2c','--accent-glow':'rgba(196,64,64,.15)','--text':'#e8e0d0','--text2':'#a89e8c','--dim':'#6d6456','--border':'#3a352e','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  amberwild:{name:'Amberwild',v:{'--bg':'#1a1714','--card':'#23201b','--input':'#2e2a24','--accent':'#d4883a','--accent-dim':'#8a5a25','--accent-glow':'rgba(212,136,58,.15)','--text':'#e8e0d0','--text2':'#a89e8c','--dim':'#6d6456','--border':'#3a352e','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  cinder:{name:'Cinder',v:{'--bg':'#1a1714','--card':'#23201b','--input':'#2e2a24','--accent':'#b0613a','--accent-dim':'#7a4026','--accent-glow':'rgba(176,97,58,.15)','--text':'#e8e0d0','--text2':'#a89e8c','--dim':'#6d6456','--border':'#3a352e','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  parchment:{name:'Parchment (light)',v:{'--bg':'#e8dfc8','--card':'#f2ead4','--input':'#ddd2b6','--accent':'#8a5a2b','--accent-dim':'#6b4520','--accent-glow':'rgba(138,90,43,.18)','--text':'#2b2418','--text2':'#5a4f3c','--dim':'#8a7c64','--border':'#c5b794','--red':'#a83232','--green':'#4a6e32','--blue':'#3a5f8a'}},
+  slate:{name:'Slate',v:{'--bg':'#191b1e','--card':'#232629','--input':'#2d3135','--accent':'#8090a0','--accent-dim':'#555f6b','--accent-glow':'rgba(128,144,160,.15)','--text':'#e2e4e7','--text2':'#99a0a8','--dim':'#5e646c','--border':'#33373c','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  royal:{name:'Royal',v:{'--bg':'#121726','--card':'#1a2138','--input':'#232c48','--accent':'#c8a44c','--accent-dim':'#8a7030','--accent-glow':'rgba(200,164,76,.15)','--text':'#e6e2d2','--text2':'#a39e88','--dim':'#6d6a58','--border':'#2e3a52','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  tidewater:{name:'Tidewater',v:{'--bg':'#0f1c1e','--card':'#172a2c','--input':'#1f383a','--accent':'#3fb0a0','--accent-dim':'#2a7268','--accent-glow':'rgba(63,176,160,.15)','--text':'#dceae8','--text2':'#8cb0aa','--dim':'#557068','--border':'#2a3e3e','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  bramblerose:{name:'Bramblerose',v:{'--bg':'#1e141a','--card':'#2a1d26','--input':'#382630','--accent':'#c47a9a','--accent-dim':'#8a5068','--accent-glow':'rgba(196,122,154,.15)','--text':'#ecdce4','--text2':'#b08ca0','--dim':'#6d5660','--border':'#3a2e34','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  oxblood:{name:'Oxblood',v:{'--bg':'#170d11','--card':'#241620','--input':'#321e28','--accent':'#a83d52','--accent-dim':'#6e2838','--accent-glow':'rgba(168,61,82,.15)','--text':'#ecdce0','--text2':'#b08c98','--dim':'#6d565e','--border':'#38282e','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  vesper:{name:'Vesper',v:{'--bg':'#12121f','--card':'#1b1b2e','--input':'#25253e','--accent':'#6c5cc4','--accent-dim':'#45397e','--accent-glow':'rgba(108,92,196,.15)','--text':'#e0dcec','--text2':'#9a94b8','--dim':'#5e5680','--border':'#2e2c44','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  obsidian:{name:'Obsidian',v:{'--bg':'#0c0c0e','--card':'#161618','--input':'#202024','--accent':'#b8b8c4','--accent-dim':'#76767e','--accent-glow':'rgba(184,184,196,.12)','--text':'#f0f0f2','--text2':'#a0a0a8','--dim':'#5e5e64','--border':'#2c2c30','--red':'#c44040','--green':'#5a9a5a','--blue':'#5a8ab4'}},
+  bone:{name:'Bone (light)',v:{'--bg':'#e4e6e3','--card':'#eef0ec','--input':'#d6d9d3','--accent':'#4a6276','--accent-dim':'#344656','--accent-glow':'rgba(74,98,118,.15)','--text':'#20242a','--text2':'#4e5660','--dim':'#828a92','--border':'#c2c6c0','--red':'#a83232','--green':'#4a6e3a','--blue':'#3a5f8a'}}
+};
+function _curTheme(){try{return localStorage.getItem(STORAGE_KEY+'-theme')||DEFAULT_THEME}catch(e){return DEFAULT_THEME}}
+function applyTheme(key){
+  const t=THEMES[key]||THEMES[DEFAULT_THEME];
+  const r=document.documentElement;
+  for(const p in t.v){r.style.setProperty(p,t.v[p]);}
+  try{localStorage.setItem(STORAGE_KEY+'-theme',key);}catch(e){}
+}
+function openThemePicker(){
+  const cur=_curTheme();
+  let html='<div class="modal-title">Theme</div><div style="color:var(--text2);font-size:.82rem;margin-bottom:12px">Pick a look for your sheet. Saves automatically and stays put across sessions.</div><div style="display:flex;flex-direction:column;gap:8px">';
+  for(const key in THEMES){const t=THEMES[key],v=t.v,sel=key===cur;
+    html+=`<div onclick="applyTheme('${key}');openThemePicker()" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:8px;cursor:pointer;border:2px solid ${sel?v['--accent']:'transparent'};background:${v['--card']};transition:border-color .15s">
+      <div style="display:flex;gap:4px;flex-shrink:0">
+        <span style="width:22px;height:22px;border-radius:5px;background:${v['--bg']};border:1px solid ${v['--border']}"></span>
+        <span style="width:22px;height:22px;border-radius:5px;background:${v['--accent']}"></span>
+        <span style="width:22px;height:22px;border-radius:5px;background:${v['--input']}"></span>
+      </div>
+      <span style="color:${v['--text']};font-family:'Cinzel',serif;font-size:1rem;letter-spacing:.5px;flex:1">${t.name}</span>
+      ${sel?`<span style="color:${v['--accent']};font-size:1.1rem">\u2713</span>`:''}
+    </div>`;
+  }
+  html+='</div><div class="modal-actions"><button class="modal-btn primary" onclick="closeMod()">Done</button></div>';
+  showMod(html);
+}
+
+function openSettings(){
+  showMod(`<div class="modal-title">Edit Character</div>
+    <div class="modal-field"><label>Name</label><input id="m-sn" value="${S.name}"></div>
+    <div class="modal-field"><label>Race</label><input id="m-sr" value="${S.race}"></div>
+    <div class="modal-field"><label>Class</label><input id="m-sc" value="${S.cls}"></div>
+    <div class="modal-field"><label>Level</label><input id="m-sl2" type="number" value="${S.level}"></div>
+    <div class="modal-field"><label>Deity</label><input id="m-sd" value="${S.deity}"></div>
+    <div class="modal-field"><label>Speed</label><input id="m-ss2" type="number" value="${S.speed}"></div>
+    <div class="modal-field"><label>Max HP</label><input id="m-sh" type="number" value="${S.maxHp}"></div>
+    <div class="modal-field"><label>Languages</label><input id="m-slg" value="${S.languages}"></div>
+    <div class="modal-field"><label>Senses</label><input id="m-sse" value="${S.senses}"></div>
+    <div class="modal-actions"><button class="modal-btn secondary" onclick="closeMod()">Cancel</button>
+    <button class="modal-btn primary" onclick="confirmSettings()">Save</button></div>
+    <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
+    <button class="modal-btn secondary" style="color:var(--red);border-color:var(--red)" onclick="if(confirm('Reset all data?')){localStorage.removeItem(STORAGE_KEY);location.reload()}">Reset All Data</button></div>`);
+}
+function confirmSettings(){
+  S.name=$('m-sn').value;S.race=$('m-sr').value;S.cls=$('m-sc').value;
+  S.level=+$('m-sl2').value||1;S.deity=$('m-sd').value;S.speed=+$('m-ss2').value||30;
+  S.maxHp=+$('m-sh').value||1;
+  S.languages=$('m-slg').value;S.senses=$('m-sse').value;
+  closeMod();renderApp();
+}
+
+// SETUP
+function initSetup(){
+  const g=$('setupAbilities');g.innerHTML='';
+  ABILS.forEach(a=>{g.innerHTML+=`<div class="setup-ability-item">
+    <span class="abl-name">${a}</span>
+    <input id="sa-${a}" type="number" value="10" oninput="$('sam-${a}').textContent='('+ms(mod(+this.value||10))+')'">
+    <span class="abl-mod" id="sam-${a}">(+0)</span></div>`});
+}
+
+function completeSetup(){
+  S.name=$('s-name').value||'Adventurer';S.race=$('s-race').value||'Human';
+  S.cls=$('s-class').value||'Fighter';S.level=+$('s-level').value||1;
+  S.deity=$('s-deity').value||'';S.speed=+$('s-speed').value||30;
+  S.size=$('s-size').value||'M';S.maxHp=+$('s-maxhp').value||20;S.hp=S.maxHp;
+  S.bab=+$('s-bab').value||0;
+  S.saves.fort.base=+$('s-fort-base').value||0;
+  S.saves.ref.base=+$('s-ref-base').value||0;
+  S.saves.will.base=+$('s-will-base').value||0;
+  S.languages=$('s-languages').value||'Common';
+  S.senses=$('s-senses').value||'';
+  S.hasComp=$('s-companion').classList.contains('on');
+  S.hasPow=$('s-powers').classList.contains('on');
+  ABILS.forEach(a=>{S.abilities[a]=+$('sa-'+a).value||10});
+  $('setupScreen').classList.add('hidden');
+  $('appContainer').style.display='flex';
+  save();renderApp();
+}
+
+// INIT
+window.addEventListener('DOMContentLoaded',()=>{
+  applyTheme(_curTheme());
+  if(loadState()){
+    renderApp();
+  } else if(CHAR_ID !== 'template') {
+    // Pre-built character: skip setup, render with baked-in defaults
+    renderApp();
+  } else {
+    // Template mode: show setup
+    $('setupScreen').classList.remove('hidden');
+    $('appContainer').style.display='none';
+    initSetup();
+  }
+});
+</script>
+</body>
+</html>
